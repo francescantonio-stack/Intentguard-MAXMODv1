@@ -1,0 +1,133 @@
+{
+  "network": "near-testnet",
+  "date": "2026-10-03",
+  "policy_contract": "intentguard-973f6c.testnet",
+  "owner": "intentguard-973f6c.testnet",
+  "demo_user": "intentguard-user-973f6c.testnet",
+  "mpc_contract": "v1.signer-prod.testnet",
+  "wasm": "contracts/near-policy/target/near/intentguard_policy.wasm (cargo-near 0.22)",
+  "keys": "~/.near-credentials/testnet/ on the box only (legacy keychain), never in repo",
+  "derived_evm": {
+    "predecessor": "intentguard-973f6c.testnet",
+    "path": "intentguard-user-973f6c.testnet,evm,1",
+    "address": "0xd2FE6a3Ae252D6fb2f604805898177c8FdaAa24B",
+    "checked": "chainsig.js offline == view derived_public_key"
+  },
+  "deploy_init": {
+    "tx": "7cvYMvb2UE6PbNaM5YxpHcV2chPBPg4nHR81bbffFsLB",
+    "explorer": "https://testnet.nearblocks.io/txns/7cvYMvb2UE6PbNaM5YxpHcV2chPBPg4nHR81bbffFsLB",
+    "args": {
+      "max_user_weekly_cap": "1000000000"
+    }
+  },
+  "rules": {
+    "base_sepolia_usdc_approve_tokenmessengerv2": {
+      "tx": "3xvKzsNErHT4e8xXg1ZGJvrQpRCr48zaY5mD5k4hcDrC",
+      "explorer": "https://testnet.nearblocks.io/txns/3xvKzsNErHT4e8xXg1ZGJvrQpRCr48zaY5mD5k4hcDrC"
+    },
+    "base_tokenmessengerv2_depositForBurn_domain15": {
+      "tx": "6eJ8K9eCRXCeGEibnpQFbWxKstx76WmCYFoTQUTZZFjP",
+      "explorer": "https://testnet.nearblocks.io/txns/6eJ8K9eCRXCeGEibnpQFbWxKstx76WmCYFoTQUTZZFjP"
+    },
+    "monad_messagetransmitterv2_receiveMessage": {
+      "tx": "2TT7MMSwbbLv4shupAnvmbXfYotoRfGFuSrsFoJ8MmLo",
+      "explorer": "https://testnet.nearblocks.io/txns/2TT7MMSwbbLv4shupAnvmbXfYotoRfGFuSrsFoJ8MmLo"
+    },
+    "monad_usdc_transfer": {
+      "tx": "FkGJ84uqZQPdS7RFD6jLGjyPjz3bnVCdGBoYek6VrnVk",
+      "explorer": "https://testnet.nearblocks.io/txns/FkGJ84uqZQPdS7RFD6jLGjyPjz3bnVCdGBoYek6VrnVk"
+    },
+    "pending": "done",
+    "plan_executor_execute": {
+      "tx": "9G1FboT3nzvmzPrgPpsP41NFagp7h6u56s3Y9daY17XG",
+      "explorer": "https://testnet.nearblocks.io/txns/9G1FboT3nzvmzPrgPpsP41NFagp7h6u56s3Y9daY17XG"
+    },
+    "plan_executor_register_passkey": {
+      "tx": "HnfvD55TvwztkpczcvYHHHsgrfwj4f2QgttDjm1dYQte",
+      "explorer": "https://testnet.nearblocks.io/txns/HnfvD55TvwztkpczcvYHHHsgrfwj4f2QgttDjm1dYQte"
+    },
+    "monad_usdc_approve_plan_executor": {
+      "tx": "FK1ZkuYB5d927xdqQVyC3Q6fVZLRFCSCf7YVqUCNgTxt",
+      "explorer": "https://testnet.nearblocks.io/txns/FK1ZkuYB5d927xdqQVyC3Q6fVZLRFCSCf7YVqUCNgTxt"
+    },
+    "temporary_native_transfer_to_deployer": {
+      "added": {
+        "tx": "9tRGjhVitF9WXdWsbwvdGW3AzX5fq3CN8iofEcy5sqZ5",
+        "explorer": "https://testnet.nearblocks.io/txns/9tRGjhVitF9WXdWsbwvdGW3AzX5fq3CN8iofEcy5sqZ5"
+      },
+      "removed": {
+        "tx": "J4fCpZnNsbNFn51y4uWnXVASZovTmUUfHx6oVdKxf7hR",
+        "explorer": "https://testnet.nearblocks.io/txns/J4fCpZnNsbNFn51y4uWnXVASZovTmUUfHx6oVdKxf7hR"
+      },
+      "max_value": "1.2 MON"
+    }
+  },
+  "demo_user_setup": {
+    "set_weekly_cap_5_usdc": {
+      "tx": "FR2nFhpUrCpHLhTaWfppdQbfQNixGNNbk6arDtouuWej",
+      "explorer": "https://testnet.nearblocks.io/txns/FR2nFhpUrCpHLhTaWfppdQbfQNixGNNbk6arDtouuWej"
+    },
+    "add_recipient_derived": {
+      "tx": "DkKpbfGxfyD77kSVbumDJd7goPELBap4xN2ZPur58nYJ",
+      "explorer": "https://testnet.nearblocks.io/txns/DkKpbfGxfyD77kSVbumDJd7goPELBap4xN2ZPur58nYJ"
+    }
+  },
+  "e2e_signing": {
+    "dummy_tx": "EIP-1559 chain 10143, nonce 0, USDC.transfer(derived, 1 USDC), gas 70000; NOT broadcast",
+    "payload": "0x4a4d745dcc86a5e67fd23d5a08d2224125b8b61814b835cfbb514127078c50dd",
+    "sign1": {
+      "tx": "DtBoYFLq6kSbvT3VZYMeQbJ1gMNZ3ysWoM6Z2MJYAbHw",
+      "explorer": "https://testnet.nearblocks.io/txns/DtBoYFLq6kSbvT3VZYMeQbJ1gMNZ3ysWoM6Z2MJYAbHw",
+      "commit_plan": {
+        "tx": "2xYybY3tCNf2NSB8qCrHX8ciGUjk4pAuQ7oeHTLoAsBk",
+        "explorer": "https://testnet.nearblocks.io/txns/2xYybY3tCNf2NSB8qCrHX8ciGUjk4pAuQ7oeHTLoAsBk"
+      },
+      "attached_tgas": 300,
+      "recovered_match": true,
+      "gas_burnt_tgas": 13.48,
+      "onchain_latency_s": 5.3,
+      "wallclock_cli_s": 8.9
+    },
+    "sign2": {
+      "tx": "7iC7QFJ1TyGmECMiVd6pCak9EmKvqksChTcJm73SXDSQ",
+      "explorer": "https://testnet.nearblocks.io/txns/7iC7QFJ1TyGmECMiVd6pCak9EmKvqksChTcJm73SXDSQ",
+      "commit_plan": {
+        "tx": "3UzFWWdhxpLh2HUD5dt1xa2JHuc3HQprkqjsyxNua1VW",
+        "explorer": "https://testnet.nearblocks.io/txns/3UzFWWdhxpLh2HUD5dt1xa2JHuc3HQprkqjsyxNua1VW"
+      },
+      "attached_tgas": 100,
+      "recovered_match": true,
+      "gas_burnt_tgas": 13.48,
+      "onchain_latency_s": 4.85,
+      "wallclock_cli_s": 8.47
+    },
+    "gas_breakdown_tgas": {
+      "policy": 2.98,
+      "mpc": "4.33+3.52",
+      "refunds": "~0.22 each"
+    },
+    "recommended_client_attached_gas_tgas": 100,
+    "cancel_plan": {
+      "tx": "6HGVYJSA5c2p7kR1dgD4tkWNmaPDhpQqZbJkvaoH1LmE",
+      "explorer": "https://testnet.nearblocks.io/txns/6HGVYJSA5c2p7kR1dgD4tkWNmaPDhpQqZbJkvaoH1LmE"
+    }
+  },
+  "negative_onchain": {
+    "commit_plan_50_usdc": "REJECTED: policy: weekly cap exceeded (requested 50000000 > remaining 4000000 USDC base units)",
+    "request_signature_50_usdc_to_0xabc": "REJECTED: policy: recipient 0x0000000000000000000000000000000000000abc not in your allowlist",
+    "note": "failed tx hashes not printed by near-cli-rs and nearblocks index empty at report time [DA VERIFICARE]"
+  },
+  "policy_upgrades_2026-10-03": {
+    "reason": "new RuleKind NativeTransfer{max_value} (temporary deployer funding) + fix: empty calldata panicked in event log",
+    "deploy1": {
+      "tx": "5ZgpxB4pQcdKhZcg5Xoo6Ltc2ZkwTapffa5KRmeHZwR7",
+      "explorer": "https://testnet.nearblocks.io/txns/5ZgpxB4pQcdKhZcg5Xoo6Ltc2ZkwTapffa5KRmeHZwR7"
+    },
+    "deploy2_fix": {
+      "tx": "Fsr37TdSbKKM3CzEwGtbd9JbPnKybtanpMaTZi4nW32a",
+      "explorer": "https://testnet.nearblocks.io/txns/Fsr37TdSbKKM3CzEwGtbd9JbPnKybtanpMaTZi4nW32a"
+    },
+    "state": "unchanged (enum variant appended, no migration)"
+  },
+  "monad_e2e": "see deployments/monad-testnet.json"
+}

@@ -1,0 +1,169 @@
+{
+  "network": "monad-testnet",
+  "chainId": 10143,
+  "date": "2026-10-03",
+  "usdc": "0x534b2f3A21130d7a60830c2Df862319e593943A3",
+  "wmon": "0xFb8bf4c1CC7a94c73D209a149eA2AbEa852BC541",
+  "contracts": {
+    "MiniSwap": {
+      "address": "0x3D06B01a6B164322013547BEB4Fe0AfF985870f8",
+      "deployTx": {
+        "tx": "0x2cd37e3ef021fed2093227d25f4c4c92b8201d353173fb70fe5866f9b89555e7",
+        "explorer": "https://testnet.monadexplorer.com/tx/0x2cd37e3ef021fed2093227d25f4c4c92b8201d353173fb70fe5866f9b89555e7"
+      },
+      "gasUsed": 956605
+    },
+    "DemoVault": {
+      "address": "0x66C210D79d24a09FCa1F8Aae8c3a98A58F578914",
+      "deployTx": {
+        "tx": "0x197892b79efaa76d6824745a633923aabd9eb60d76b71cef868d7c63235202fd",
+        "explorer": "https://testnet.monadexplorer.com/tx/0x197892b79efaa76d6824745a633923aabd9eb60d76b71cef868d7c63235202fd"
+      },
+      "gasUsed": 1486208
+    },
+    "PlanExecutor": {
+      "address": "0x3f1391EC12002E10E18Efa82Af5E491f8159faC1",
+      "deployTx": {
+        "tx": "0x56a46ee3abae5f16c03fca508e24f0190a6872b7b09417287c27ffd1870fb313",
+        "explorer": "https://testnet.monadexplorer.com/tx/0x56a46ee3abae5f16c03fca508e24f0190a6872b7b09417287c27ffd1870fb313"
+      },
+      "gasUsed": 2125147,
+      "maxPlanAmount": "100000000",
+      "maxWeeklyCap": "1000000000"
+    }
+  },
+  "verification": "Sourcify (https://sourcify-api-monad.blockvision.org): exact_match for all 3, no account needed",
+  "deployer": {
+    "address": "0xD22418AF35295B515F00eBfcFE8a42bBeF446300",
+    "note": "box-local TEST-ONLY EOA, key in ~/.intentguard/ (never in repo)",
+    "deployCostMON": "~0.466"
+  },
+  "derivedAccount": {
+    "address": "0xd2FE6a3Ae252D6fb2f604805898177c8FdaAa24B",
+    "nearPolicy": "intentguard-973f6c.testnet",
+    "path": "intentguard-user-973f6c.testnet,evm,1"
+  },
+  "firstMpcBroadcast": {
+    "tx": "0x9beb0227b8d8578a47ca5853ee4831cc907c5714533bf47fcc76f1809b785d4a",
+    "explorer": "https://testnet.monadexplorer.com/tx/0x9beb0227b8d8578a47ca5853ee4831cc907c5714533bf47fcc76f1809b785d4a",
+    "what": "1.2 MON derived -> deployer, nonce 0, gas 21000, signed by v1.signer-prod.testnet via policy (temporary NativeTransfer rule)",
+    "nearCommitPlan": {
+      "tx": "5JRTbaj992jTwjRMRCi7QbiRhMwRKYCaPvgfZcSGo2aw",
+      "explorer": "https://testnet.nearblocks.io/txns/5JRTbaj992jTwjRMRCi7QbiRhMwRKYCaPvgfZcSGo2aw"
+    },
+    "payload": "0xf51e0dc097d41c5d7ca4c917824fd6a91506a9758018a3b234cc16cb0c9d3c0f",
+    "recoveredMatch": true,
+    "nearSignTx": "not captured: near-cli-rs prints the Transaction ID on stderr which the first script version dropped (fixed); the signature itself is in the Monad tx",
+    "temporaryRuleAdded": {
+      "tx": "9tRGjhVitF9WXdWsbwvdGW3AzX5fq3CN8iofEcy5sqZ5",
+      "explorer": "https://testnet.nearblocks.io/txns/9tRGjhVitF9WXdWsbwvdGW3AzX5fq3CN8iofEcy5sqZ5"
+    },
+    "temporaryRuleRemoved": {
+      "tx": "J4fCpZnNsbNFn51y4uWnXVASZovTmUUfHx6oVdKxf7hR",
+      "explorer": "https://testnet.nearblocks.io/txns/J4fCpZnNsbNFn51y4uWnXVASZovTmUUfHx6oVdKxf7hR"
+    }
+  },
+  "seeding_by_deployer": {
+    "usdcSource": "PuddleSwap UniswapV2Router02 0x430c23895c8D44883526e3E0B09327dAD8766660 (0.3 MON -> 1.348931 USDC); Circle faucet has reCAPTCHA",
+    "swapMonForUsdc": {
+      "tx": "0xf49f3f915d24a214eabc9082151eda639af5fd7ae3c0e533936efe8e32db7c41",
+      "explorer": "https://testnet.monadexplorer.com/tx/0xf49f3f915d24a214eabc9082151eda639af5fd7ae3c0e533936efe8e32db7c41"
+    },
+    "wrapMon": {
+      "tx": "0xda55458fb08f74a665316eb974912817377bbf190643844ad5ae6e60b1ff118b",
+      "explorer": "https://testnet.monadexplorer.com/tx/0xda55458fb08f74a665316eb974912817377bbf190643844ad5ae6e60b1ff118b"
+    },
+    "approveUsdc": {
+      "tx": "0x757a71e15699991fd48db1daab8140179d6f30acbcd66f6c56f1e95608a9ad66",
+      "explorer": "https://testnet.monadexplorer.com/tx/0x757a71e15699991fd48db1daab8140179d6f30acbcd66f6c56f1e95608a9ad66"
+    },
+    "approveWmon": {
+      "tx": "0x6e6bfdb5abb16bc654679317c45246031b1584325cc7eb9d31e9737334269e65",
+      "explorer": "https://testnet.monadexplorer.com/tx/0x6e6bfdb5abb16bc654679317c45246031b1584325cc7eb9d31e9737334269e65"
+    },
+    "addLiquidity_0.6USDC_0.133WMON": {
+      "tx": "0x36a329e61681dfd5c557a28440017985dcd7126e34c1f211c02f537054e50ed7",
+      "explorer": "https://testnet.monadexplorer.com/tx/0x36a329e61681dfd5c557a28440017985dcd7126e34c1f211c02f537054e50ed7"
+    },
+    "usdcToDerived_0.748931": {
+      "tx": "0x62b93a53bfaf8954ba8cfa5c68cff559554490c899acb2f25c85ca81c9f213d2",
+      "explorer": "https://testnet.monadexplorer.com/tx/0x62b93a53bfaf8954ba8cfa5c68cff559554490c899acb2f25c85ca81c9f213d2"
+    }
+  },
+  "e2e_mpc_signed": {
+    "plan": {
+      "account": "0xd2FE6a3Ae252D6fb2f604805898177c8FdaAa24B",
+      "amountIn": "600000",
+      "swapAmount": "200000",
+      "minAmountOut": "32843380035026269",
+      "unwrap": true,
+      "nonce": 0,
+      "deadline": 1791020917,
+      "planHash": "0x05b3b7e511c62d55324a52435c3426f23137371d260f994b4d6b610e83e9b7f9",
+      "nearCommitPlan": {
+        "tx": "3iYrWv9vkbEV8iAMdWUCtwK79Ls1roAxvaZBbd2N5WDz",
+        "explorer": "https://testnet.nearblocks.io/txns/3iYrWv9vkbEV8iAMdWUCtwK79Ls1roAxvaZBbd2N5WDz"
+      }
+    },
+    "passkey": "TEST-ONLY software P-256 key (scripts/live-checks/test_passkey.py, key in ~/.intentguard/), weeklyCap 5 USDC; Max's real passkey later",
+    "steps": [
+      {
+        "step": "registerPasskey",
+        "near": {
+          "tx": "2sLUbCeDq3zCW6UNSdQZvhVdUWX2ceXs7eaAje7NivbL",
+          "explorer": "https://testnet.nearblocks.io/txns/2sLUbCeDq3zCW6UNSdQZvhVdUWX2ceXs7eaAje7NivbL"
+        },
+        "monad": {
+          "tx": "0xd0664407272683196866a2b455ca42cca374082853b10cbdd92d23b0ce8db3c8",
+          "explorer": "https://testnet.monadexplorer.com/tx/0xd0664407272683196866a2b455ca42cca374082853b10cbdd92d23b0ce8db3c8"
+        },
+        "monadGas": 145942,
+        "nearGasTgas": 13.42,
+        "signMs": 8826,
+        "totalMs": 12920
+      },
+      {
+        "step": "USDC.approve(PlanExecutor,0.6)",
+        "near": {
+          "tx": "814tT7gAmvyETUfKdWN3A8owvWLRgYz9JF7g7agFykKU",
+          "explorer": "https://testnet.nearblocks.io/txns/814tT7gAmvyETUfKdWN3A8owvWLRgYz9JF7g7agFykKU"
+        },
+        "monad": {
+          "tx": "0x226b2845d196f9c7cc0e34b19a59f5617799bc115935a55ea253b542f10071c1",
+          "explorer": "https://testnet.monadexplorer.com/tx/0x226b2845d196f9c7cc0e34b19a59f5617799bc115935a55ea253b542f10071c1"
+        },
+        "monadGas": 109538,
+        "nearGasTgas": 13.43,
+        "signMs": 8102,
+        "totalMs": 12090
+      },
+      {
+        "step": "PlanExecutor.execute (swap 0.2 USDC->MON unwrap + deposit 0.4 USDC)",
+        "near": {
+          "tx": "Hj2Tgs9UPZ5TUt8EpTtfLuzSxMqtRx9eUZB5zs1eE8YP",
+          "explorer": "https://testnet.nearblocks.io/txns/Hj2Tgs9UPZ5TUt8EpTtfLuzSxMqtRx9eUZB5zs1eE8YP"
+        },
+        "monad": {
+          "tx": "0x970c7022d4a7846cac0f515bf3a8dda2e2a209f5fb988d760f08e301aa47628f",
+          "explorer": "https://testnet.monadexplorer.com/tx/0x970c7022d4a7846cac0f515bf3a8dda2e2a209f5fb988d760f08e301aa47628f"
+        },
+        "monadGas": 689311,
+        "nearGasTgas": 13.77,
+        "signMs": 9167,
+        "totalMs": 13096
+      }
+    ],
+    "result": "all recovered signer == derived address; status success; vault shares 4e11 (0.4 USDC), ~0.0332 MON received, PlanExecutor nonce 1",
+    "note": "monadGas = receipt gasUsed (Monad charges the gas limit; limit = estimate * 1.25)"
+  },
+  "negative": {
+    "near_commit_50_usdc": "REJECTED on NEAR: policy: weekly cap exceeded (requested 50000000 > remaining 2400000)",
+    "planExecutor_over_weekly_cap": "eth_call with valid passkey sig, amountIn 6 USDC -> revert OverWeeklyCap(6000000, 4400000) (0xcd9c61d8)"
+  },
+  "balancesAfter": {
+    "derivedMON": "3.7347",
+    "derivedUSDC": "0.148931",
+    "deployerMON": "0.2089"
+  },
+  "cctpBaseLeg": "skipped: derived address needs Base Sepolia ETH (gas) + Base Sepolia USDC"
+}

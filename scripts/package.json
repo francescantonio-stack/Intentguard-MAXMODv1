@@ -1,0 +1,12 @@
+{
+  "name": "@intentguard/scripts",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "live-checks": "node live-checks/near_derivation.mjs && python3 live-checks/evm_checks.py && python3 live-checks/p256_vector.py live-checks/p256_vector.json"
+  },
+  "dependencies": {
+    "chainsig.js": "^1.1.16",
+    "viem": "^2.57.2"
+  }
+}
