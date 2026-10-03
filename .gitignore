@@ -1,0 +1,36 @@
+# ---- secrets: never commit ----
+.env
+.env.*
+!.env.example
+*.key
+*.pem
+*.keystore
+keys/
+keystore/
+keystores/
+.intentguard/
+**/.intentguard/
+neardev/
+**/neardev/
+.near-credentials/
+credentials/
+*credentials*.json
+*.secret
+*secret*.json
+
+# ---- build output / deps ----
+node_modules/
+target/
+out/
+cache/
+broadcast/
+# Forge deps are git submodules (contracts/evm/lib/*), not vendored files.
+lib/
+!contracts/evm/lib/
+contracts/evm/lib/*
+!contracts/evm/lib/forge-std
+!contracts/evm/lib/solady
+
+# local-only artifacts
+deployments/*.local-fork.json
+.DS_Store
