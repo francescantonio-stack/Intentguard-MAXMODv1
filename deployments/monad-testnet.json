@@ -182,5 +182,90 @@
       "tx": "CjAx6ihJ9C4j27kykiZSfe8G2ftNiyMqjxGaucjpEcjN",
       "explorer": "https://testnet.nearblocks.io/txns/CjAx6ihJ9C4j27kykiZSfe8G2ftNiyMqjxGaucjpEcjN"
     }
+  },
+  "miniSwapReseed_2026-10-03": {
+    "price": "4.5 USDC per MON (= PuddleSwap testnet reference, 0.1 MON -> 0.4488 USDC)",
+    "cctpForLiquidity": "4 USDC Base->Monad, see deployments/cctp-runs.json (burn 0x76db25be..., mint 0x4ad7babd...)",
+    "arbToPrice_byDeployer": {
+      "wrap": {
+        "tx": "0x14e6341277cd8e11e0446ff8e990a8a58750ef1d475e20cdd6e425b315d044fb",
+        "explorer": "https://testnet.monadexplorer.com/tx/0x14e6341277cd8e11e0446ff8e990a8a58750ef1d475e20cdd6e425b315d044fb"
+      },
+      "approve": {
+        "tx": "0x20acb36980fcf783d25e89b68c70c37e8a82cb310cd8291c2ddbe69caef65158",
+        "explorer": "https://testnet.monadexplorer.com/tx/0x20acb36980fcf783d25e89b68c70c37e8a82cb310cd8291c2ddbe69caef65158"
+      },
+      "swap_0.089WMON_in": {
+        "tx": "0x30dc4502e1b2f775e7345489ba4245af1b7c22cf8c8c8e7e9c51e357b0be090d",
+        "explorer": "https://testnet.monadexplorer.com/tx/0x30dc4502e1b2f775e7345489ba4245af1b7c22cf8c8c8e7e9c51e357b0be090d"
+      }
+    },
+    "fromDerived_viaPolicyMPC": {
+      "tempNativeRuleAdded": {
+        "tx": "7LpDqjvBFs95DaH8NuF1Xam37gc7XiY5ZrwzuHkV4mW",
+        "explorer": "https://testnet.nearblocks.io/txns/7LpDqjvBFs95DaH8NuF1Xam37gc7XiY5ZrwzuHkV4mW"
+      },
+      "tempRecipientAdded": {
+        "tx": "CtNvrwoi9tJ5exCaaic9QFsHM7ujnmSYQqDgAs3CmydY",
+        "explorer": "https://testnet.nearblocks.io/txns/CtNvrwoi9tJ5exCaaic9QFsHM7ujnmSYQqDgAs3CmydY"
+      },
+      "commitPlan": {
+        "tx": "7isf4mguUv6aAD4iYK5AtjSJzvryCvdMFFEvr794qj24",
+        "explorer": "https://testnet.nearblocks.io/txns/7isf4mguUv6aAD4iYK5AtjSJzvryCvdMFFEvr794qj24"
+      },
+      "mon_1.05_to_deployer": {
+        "tx": "0x346566cca41eff3054dda7874c18c5b5f633d21bcc44f3b25ebaddc6f4fc99b2",
+        "explorer": "https://testnet.monadexplorer.com/tx/0x346566cca41eff3054dda7874c18c5b5f633d21bcc44f3b25ebaddc6f4fc99b2",
+        "nearTx": "4gFV6EZUfbzw9R2t5RL2CihFHLZXNVFow2ym5KJdN4kE"
+      },
+      "usdc_3.301_to_deployer": {
+        "tx": "0x4de08f3cd086e2f0175e50a9117031e809c2282a026de997b3f65dd80e4479e3",
+        "explorer": "https://testnet.monadexplorer.com/tx/0x4de08f3cd086e2f0175e50a9117031e809c2282a026de997b3f65dd80e4479e3",
+        "nearTx": "ExTzf9NZnpX1ZfsczcFhrFrsfFa9V96T1k6DmcMxNZC5"
+      },
+      "tempNativeRuleRemoved": {
+        "tx": "7WWNvxbCq6eGMzuTag2uUfHeFRUKe1wNetVrP25Djq6L",
+        "explorer": "https://testnet.nearblocks.io/txns/7WWNvxbCq6eGMzuTag2uUfHeFRUKe1wNetVrP25Djq6L"
+      },
+      "tempRecipientRemoved": {
+        "tx": "28Zf6nQjGbsdA8eMPFf5wFHv3AtBAyw1i9xrXf6v1TzF",
+        "explorer": "https://testnet.nearblocks.io/txns/28Zf6nQjGbsdA8eMPFf5wFHv3AtBAyw1i9xrXf6v1TzF"
+      }
+    },
+    "addLiquidity_byDeployer": {
+      "wrap_1MON": {
+        "tx": "0x53e575d374d987fe8745a174fed3b11bb8400ddf1dcf6b9fe9b4aa844822254b",
+        "explorer": "https://testnet.monadexplorer.com/tx/0x53e575d374d987fe8745a174fed3b11bb8400ddf1dcf6b9fe9b4aa844822254b"
+      },
+      "approveUsdc": {
+        "tx": "0xaa690fc86e03e190b78d056e6609be1c2a31aeffda8e05797901140aecf1a2ff",
+        "explorer": "https://testnet.monadexplorer.com/tx/0xaa690fc86e03e190b78d056e6609be1c2a31aeffda8e05797901140aecf1a2ff"
+      },
+      "approveWmon": {
+        "tx": "0x12c4256c5d314c25a26fd148c65a651d9598b6fe53e0ce093688a1d9a05f92a6",
+        "explorer": "https://testnet.monadexplorer.com/tx/0x12c4256c5d314c25a26fd148c65a651d9598b6fe53e0ce093688a1d9a05f92a6"
+      },
+      "addLiquidity_4.5USDC_1WMON": {
+        "tx": "0x1abba913a8787f59fd6a5e9e045927ea65d7256de11c7b66da88a8de6d0b7b00",
+        "explorer": "https://testnet.monadexplorer.com/tx/0x1abba913a8787f59fd6a5e9e045927ea65d7256de11c7b66da88a8de6d0b7b00"
+      }
+    },
+    "poolAfter": {
+      "usdc": "5.100577",
+      "wmon": "1.133461",
+      "spotMonPerUsdc": "0.2222"
+    },
+    "quote_1_USDC": {
+      "wmonOut": "0.185330",
+      "priceImpactInclFee": "16.6%",
+      "note": "~1 MON at market price is not deep enough for <5% impact on 1 USDC; needs ~4.3 MON + 19 USDC, or a 0.25 USDC demo swap (~5%)"
+    },
+    "balancesAfter": {
+      "derivedMON": "2.5316",
+      "derivedUSDC": "2.847412",
+      "deployerMON": "0.1043",
+      "baseUSDC": "32",
+      "baseETH": "0.0000970"
+    }
   }
 }
