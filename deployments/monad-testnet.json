@@ -165,5 +165,22 @@
     "derivedUSDC": "0.148931",
     "deployerMON": "0.2089"
   },
-  "cctpBaseLeg": "skipped: derived address needs Base Sepolia ETH (gas) + Base Sepolia USDC"
+  "cctpBaseLeg": {
+    "status": "done (real Circle CCTP V2, fast transfer, Base Sepolia domain 6 -> Monad domain 15), see deployments/cctp-runs.json",
+    "script": "scripts/cctp-base-to-monad.mjs",
+    "mintRecipient": "derived address (PlanExecutor pulls USDC from plan.account)",
+    "aborted_first_attempt": {
+      "approve": {
+        "tx": "0x7b097f7668c929b90e8815db3116b55f14393765e557d98076668b9341f7ca71",
+        "explorer": "https://sepolia.basescan.org/tx/0x7b097f7668c929b90e8815db3116b55f14393765e557d98076668b9341f7ca71",
+        "nearTx": "5mosW3vu8CFfE61Hqx4fBHmzgD4xBmeEnQfdH7BL8ixr"
+      },
+      "note": "burn gas estimate hit a stale RPC node; script now retries. This allowance was used by the next run (approve skipped)."
+    },
+    "nearWeeklyCapRaised": {
+      "to": "20 USDC",
+      "tx": "CjAx6ihJ9C4j27kykiZSfe8G2ftNiyMqjxGaucjpEcjN",
+      "explorer": "https://testnet.nearblocks.io/txns/CjAx6ihJ9C4j27kykiZSfe8G2ftNiyMqjxGaucjpEcjN"
+    }
+  }
 }

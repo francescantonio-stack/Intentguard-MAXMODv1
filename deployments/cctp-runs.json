@@ -1,0 +1,125 @@
+[
+  {
+    "date": "2026-10-03T13:15:53.795Z",
+    "amount": "2000000",
+    "mode": "fast",
+    "mintRecipient": "0xd2FE6a3Ae252D6fb2f604805898177c8FdaAa24B",
+    "steps": [
+      {
+        "step": "base: TokenMessengerV2.depositForBurn",
+        "txHash": "0x5c9a64352d4b2ebed79d91f860c57b74db773860cae637d10b78156ee6fe22eb",
+        "explorer": "https://sepolia.basescan.org/tx/0x5c9a64352d4b2ebed79d91f860c57b74db773860cae637d10b78156ee6fe22eb",
+        "nearTx": "CzPtrFqHDdJa2DNJrUTqL8HsqhPbRxbBe1KcEzakKEUo",
+        "nearExplorer": "https://testnet.nearblocks.io/txns/CzPtrFqHDdJa2DNJrUTqL8HsqhPbRxbBe1KcEzakKEUo",
+        "gasUsed": 109115,
+        "feeWei": "662321680395",
+        "totalMs": 16625
+      },
+      {
+        "step": "monad: MessageTransmitterV2.receiveMessage",
+        "txHash": "0x749fe4500c991156573080bd89ad4db06358489a1d7ee4fac6e023abf6e179a6",
+        "explorer": "https://testnet.monadexplorer.com/tx/0x749fe4500c991156573080bd89ad4db06358489a1d7ee4fac6e023abf6e179a6",
+        "nearTx": "2ZDvBSAFvvrKpjhxkwkd3foXWzh7Cc6zB1aXoUMXEJru",
+        "nearExplorer": "https://testnet.nearblocks.io/txns/2ZDvBSAFvvrKpjhxkwkd3foXWzh7Cc6zB1aXoUMXEJru",
+        "gasUsed": 408787,
+        "feeWei": "41696274000000000",
+        "totalMs": 12447
+      }
+    ],
+    "minFinalityThreshold": 1000,
+    "circleMinFeeBps": 1.3,
+    "maxFee": "521",
+    "planHash": "0xfe1f4f349e1fd8d36b31da7d5effee7099aa4e1b51fb3d4c0bcf9e83bd7d39eb",
+    "nearCommitPlan": "CJFfp444kouPcnedG7D67RPAWxMsoSVUzgC6xzSGmBxx",
+    "attestationMs": 9443,
+    "cctpFeeExecuted": "260",
+    "mintedOnMonad": "1999740",
+    "cctpEndToEndMs": 67229,
+    "totalMs": 67480,
+    "baseEthSpentWei": "662321680395",
+    "baseEthLeftWei": "98998652655106",
+    "monadUsdcEnd": "2148671",
+    "monadMonEndWei": "3692968175348511383"
+  },
+  {
+    "date": "2026-10-03T13:17:19.075Z",
+    "amount": "2000000",
+    "mode": "fast",
+    "mintRecipient": "0xd2FE6a3Ae252D6fb2f604805898177c8FdaAa24B",
+    "steps": [
+      {
+        "step": "base: USDC.approve(TokenMessengerV2)",
+        "txHash": "0x451d02b978e82dd3c13bcfc87e351bb22380d1757977916e201621e5f6a4b23f",
+        "explorer": "https://sepolia.basescan.org/tx/0x451d02b978e82dd3c13bcfc87e351bb22380d1757977916e201621e5f6a4b23f",
+        "nearTx": "8MuSZz75BapcCHvTJQ46KsyFUQe78iUJ8CfJF2wURpYq",
+        "nearExplorer": "https://testnet.nearblocks.io/txns/8MuSZz75BapcCHvTJQ46KsyFUQe78iUJ8CfJF2wURpYq",
+        "gasUsed": 55437,
+        "feeWei": "338386949285",
+        "totalMs": 13176
+      },
+      {
+        "step": "base: TokenMessengerV2.depositForBurn",
+        "txHash": "0x8b1c6040af0300d49d5cc854ac5adc1c54e9877d6768c9aabd06fd7b48e68eda",
+        "explorer": "https://sepolia.basescan.org/tx/0x8b1c6040af0300d49d5cc854ac5adc1c54e9877d6768c9aabd06fd7b48e68eda",
+        "nearTx": "GER7VHvsojSqxgC3QNX8YQ3M8YSTZ4Qb1MyS6w3hiQp3",
+        "nearExplorer": "https://testnet.nearblocks.io/txns/GER7VHvsojSqxgC3QNX8YQ3M8YSTZ4Qb1MyS6w3hiQp3",
+        "gasUsed": 109115,
+        "feeWei": "662501788855",
+        "totalMs": 18177
+      },
+      {
+        "step": "monad: MessageTransmitterV2.receiveMessage",
+        "txHash": "0x57986db9ce312e0d50b418d84d3add2fd4903911299e1a57adc9b9928679feaa",
+        "explorer": "https://testnet.monadexplorer.com/tx/0x57986db9ce312e0d50b418d84d3add2fd4903911299e1a57adc9b9928679feaa",
+        "nearTx": "7z3JJiNT9gRxnQjdHQdA8bKQKc1Q3iNTdWwGKj5zSDCt",
+        "nearExplorer": "https://testnet.nearblocks.io/txns/7z3JJiNT9gRxnQjdHQdA8bKQKc1Q3iNTdWwGKj5zSDCt",
+        "gasUsed": 408796,
+        "feeWei": "41697192000000000",
+        "totalMs": 12788
+      },
+      {
+        "step": "monad: USDC.approve(PlanExecutor)",
+        "txHash": "0xc2fa45e863b0005074144d884daacaee61090e3d2c910feddb1556f7d5002e8b",
+        "explorer": "https://testnet.monadexplorer.com/tx/0xc2fa45e863b0005074144d884daacaee61090e3d2c910feddb1556f7d5002e8b",
+        "nearTx": "FqrTFWejqzeq36YpHQj7EJCb9P5SM5J1wGVQEAYPgRNr",
+        "nearExplorer": "https://testnet.nearblocks.io/txns/FqrTFWejqzeq36YpHQj7EJCb9P5SM5J1wGVQEAYPgRNr",
+        "gasUsed": 109538,
+        "feeWei": "11172876000000000",
+        "totalMs": 12694
+      },
+      {
+        "step": "monad: PlanExecutor.execute",
+        "txHash": "0x4c0501ea37f917411543aab82536235a5a7fb6c2ecbba4339499a5919852585d",
+        "explorer": "https://testnet.monadexplorer.com/tx/0x4c0501ea37f917411543aab82536235a5a7fb6c2ecbba4339499a5919852585d",
+        "nearTx": "Ap4ZnT59ETdpkgtDx4xYkjkWk4aeEePUuMq8JCnHPbLf",
+        "nearExplorer": "https://testnet.nearblocks.io/txns/Ap4ZnT59ETdpkgtDx4xYkjkWk4aeEePUuMq8JCnHPbLf",
+        "gasUsed": 582218,
+        "feeWei": "59386236000000000",
+        "totalMs": 12997
+      }
+    ],
+    "minFinalityThreshold": 1000,
+    "circleMinFeeBps": 1.3,
+    "maxFee": "521",
+    "plan": {
+      "account": "0xd2FE6a3Ae252D6fb2f604805898177c8FdaAa24B",
+      "amountIn": "1999479",
+      "swapAmount": "999739",
+      "minAmountOut": "54823978781189698",
+      "unwrap": true,
+      "nonce": "1",
+      "deadline": "1791035242"
+    },
+    "planHash": "0x728b469f568173b9fc2189c73f3f3246c0c08a2d0f1a61515e1c7f2954998788",
+    "nearCommitPlan": "5CcXySXnxdP9Nwemuc8wLSdgjTUKBVuNj2BfKftYRNSR",
+    "attestationMs": 28037,
+    "cctpFeeExecuted": "260",
+    "mintedOnMonad": "1999740",
+    "cctpEndToEndMs": 101886,
+    "totalMs": 134590,
+    "baseEthSpentWei": "1000888738140",
+    "baseEthLeftWei": "97997763916966",
+    "monadUsdcEnd": "2148932",
+    "monadMonEndWei": "3636089627693147442"
+  }
+]

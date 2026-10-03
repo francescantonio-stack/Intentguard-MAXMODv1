@@ -223,6 +223,28 @@ Il gas Monad riportato è il `gasUsed` della ricevuta, che coincide con il limit
 - `MiniSwap` e `DemoVault` sono **nostri e mock**: va scritto chiaramente nel README pubblico. CCTP, Chain Signatures e il precompile P256 sono **reali**.
 - Nessun audit. Solo testnet.
 
+## CCTP V2 reale Base Sepolia → Monad testnet (3/10/2026)
+
+Script riutilizzabile: `node scripts/cctp-base-to-monad.mjs --amount 2 [--standard] [--execute]`.
+- Ogni tx parte dall'indirizzo derivato `0xd2FE…a24B` (lo stesso path su entrambe le chain) ed è firmata dalla policy NEAR insieme all'MPC. Gli helper comuni sono in `scripts/lib/mpc.mjs`.
+- `mintRecipient` è l'indirizzo derivato stesso, perché è da lì che `PlanExecutor` preleva gli USDC (`plan.account`).
+- Sequenza:
+  1. approve, solo se l'allowance non basta;
+  2. `depositForBurn` con fast transfer: `minFinalityThreshold` 1000 e `maxFee` pari al doppio del minimo indicato da Circle (oggi 1,3 bps, quindi 521 unità base su 2 USDC);
+  3. attestazione dall'API Iris sandbox;
+  4. `receiveMessage` su Monad.
+- Con `--execute` lo script fa tutta la demo in un colpo solo. Usa un solo piano NEAR, il cui `plan_hash` è `PlanExecutor.planHash(plan)`, approvato con la passkey di test. Il piano scambia metà in MON nativo e deposita il resto nel vault.
+- Ogni esecuzione viene registrata in `deployments/cctp-runs.json`.
+
+| Run | Base burn | Monad mint | Tempo |
+|---|---|---|---|
+| Solo CCTP, 2 USDC | [0x5c9a6435…](https://sepolia.basescan.org/tx/0x5c9a64352d4b2ebed79d91f860c57b74db773860cae637d10b78156ee6fe22eb) (approve [0x7b097f76…](https://sepolia.basescan.org/tx/0x7b097f7668c929b90e8815db3116b55f14393765e557d98076668b9341f7ca71)) | [0x749fe450…](https://testnet.monadexplorer.com/tx/0x749fe4500c991156573080bd89ad4db06358489a1d7ee4fac6e023abf6e179a6): mintati 1,99974 USDC (fee 0,00026) | 67 s, di cui 9,4 s per l'attestazione |
+| Demo completa (`--execute`), 2 USDC | [0x8b1c6040…](https://sepolia.basescan.org/tx/0x8b1c6040af0300d49d5cc854ac5adc1c54e9877d6768c9aabd06fd7b48e68eda) | [0x57986db9…](https://testnet.monadexplorer.com/tx/0x57986db9ce312e0d50b418d84d3add2fd4903911299e1a57adc9b9928679feaa), poi [execute 0x4c0501ea…](https://testnet.monadexplorer.com/tx/0x4c0501ea37f917411543aab82536235a5a7fb6c2ecbba4339499a5919852585d) | 135 s in totale (CCTP 102 s, attestazione 28 s) |
+
+**Costo in ETH su Base:** circa 0,33–0,5 µETH per tx; in tutto circa 2 µETH per 4 tx.
+
+**Prezzo dello swap:** MiniSwap ha poca liquidità, quindi lo swap di circa 1 USDC ha reso solo circa 0,055 MON (impatto sul prezzo forte). Prima di una demo pubblica conviene aggiungere liquidità al pool.
+
 ## AI tools disclosure
 
 Questo progetto è stato costruito con l'aiuto di assistenti AI: **Claude Code** (Anthropic) e **Grok Bot**. Li abbiamo usati per scrivere il codice, i test, gli script e la documentazione, e per eseguire deploy e verifiche su testnet. Le decisioni di progetto e l'approvazione di ogni passo sono del team (Dominiumchain). Tutto il codice è stato eseguito e testato: i risultati sono riportati sopra.
