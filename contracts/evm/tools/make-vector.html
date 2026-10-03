@@ -1,0 +1,39 @@
+<!doctype html>
+<!-- Generates test/fixtures/browser_vector.json with YOUR real passkey (testnet test vector, no secrets inside).
+     Serve on localhost (WebAuthn needs a secure context):  python3 -m http.server 8000  → http://localhost:8000/tools/make-vector.html -->
+<html><head><meta charset="utf-8"><title>IntentGuard – WebAuthn vector</title></head>
+<body style="font-family:system-ui;max-width:760px;margin:2rem auto">
+<h3>IntentGuard: genera un vettore WebAuthn reale (solo test)</h3>
+<button id="go">1) Crea passkey e firma una challenge di prova</button>
+<pre id="out" style="white-space:pre-wrap;background:#f4f4f4;padding:1rem"></pre>
+<script>
+const N = 0xFFFFFFFF00000000FFFFFFFFFFFFFFFFBCE6FAADA7179E84F3B9CAC2FC632551n;
+const hex = (u8) => '0x' + [...new Uint8Array(u8)].map(b => b.toString(16).padStart(2, '0')).join('');
+const big = (u8) => BigInt(hex(u8));
+const pad32 = (n) => '0x' + n.toString(16).padStart(64, '0');
+function derToRS(der) { // ASN.1 SEQUENCE { INTEGER r, INTEGER s }
+  const d = new Uint8Array(der); let i = 2;
+  const rl = d[i + 1]; const r = d.slice(i + 2, i + 2 + rl); i = i + 2 + rl;
+  const sl = d[i + 1]; const s = d.slice(i + 2, i + 2 + sl);
+  let sv = big(s); if (sv > N / 2n) sv = N - sv; // low-S, required by Solady/P256.verifySignature
+  return { r: pad32(big(r)), s: pad32(sv) };
+}
+document.getElementById('go').onclick = async () => {
+  const out = document.getElementById('out');
+  try {
+    const cred = await navigator.credentials.create({ publicKey: {
+      rp: { name: 'IntentGuard test' }, user: { id: crypto.getRandomValues(new Uint8Array(16)), name: 'test', displayName: 'test' },
+      challenge: crypto.getRandomValues(new Uint8Array(32)), pubKeyCredParams: [{ type: 'public-key', alg: -7 }],
+      authenticatorSelection: { userVerification: 'required', residentKey: 'preferred' } } });
+    const spki = new Uint8Array(cred.response.getPublicKey()); // SPKI DER; P-256 point = last 64 bytes
+    const x = hex(spki.slice(-64, -32)), y = hex(spki.slice(-32));
+    const challenge = crypto.getRandomValues(new Uint8Array(32)); // stands in for a plan hash
+    const a = await navigator.credentials.get({ publicKey: { challenge, allowCredentials: [{ type: 'public-key', id: cred.rawId }], userVerification: 'required' } });
+    const clientDataJSON = new TextDecoder().decode(a.response.clientDataJSON);
+    const { r, s } = derToRS(a.response.signature);
+    const vec = { challenge: hex(challenge), authenticatorData: hex(a.response.authenticatorData), clientDataJSON,
+      challengeIndex: clientDataJSON.indexOf('"challenge":"'), typeIndex: clientDataJSON.indexOf('"type":"'), r, s, x, y };
+    out.textContent = 'Salva questo JSON come contracts/evm/test/fixtures/browser_vector.json e lancia forge test:\n\n' + JSON.stringify(vec, null, 1);
+  } catch (e) { out.textContent = 'Errore: ' + e; }
+};
+</script></body></html>
