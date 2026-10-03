@@ -1,0 +1,20 @@
+[package]
+name = "mock-mpc"
+version = "0.1.0"
+edition = "2021"
+description = "Local-sandbox stand-in for v1.signer-prod.testnet (records requests, returns a fixed signature). NEVER deploy to testnet."
+publish = false
+
+[lib]
+crate-type = ["cdylib", "rlib"]
+
+[dependencies]
+near-sdk = "5.29"
+
+[profile.release]
+codegen-units = 1
+opt-level = "z"
+lto = true
+debug = false
+panic = "abort"
+overflow-checks = true
