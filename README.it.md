@@ -1,5 +1,7 @@
 # IntentGuard: codice del prototipo (Monad Metropolis, solo testnet)
 
+*Versione italiana (note di lavoro dettagliate). The judge-facing English README is [README.md](README.md).*
+
 *Stato al 3/10/2026 (ora di Roma). Solo testnet: NEAR testnet e Monad testnet (chain 10143). Nessun fondo reale, nessuna chiave nel repo. Le chiavi di test stanno solo sulla macchina locale, fuori dal repo.*
 
 Layout del repo: codice nella radice, documenti di progetto in `docs/` (`piano.md`, `CLAUDE.md`, `prompts.md`), prototipo dell'interfaccia in `app-demo/intentguard.html`.
