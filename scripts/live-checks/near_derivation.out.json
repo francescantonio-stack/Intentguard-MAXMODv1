@@ -1,0 +1,20 @@
+{
+ "mpcContract": "v1.signer-prod.testnet",
+ "predecessor": "intentguard-policy.testnet",
+ "path": "maxz-demo.testnet,evm,1",
+ "offline": {
+  "publicKey": "04ac17fb765236a5d223e4def0fc6dc2f3995266e1d5ff2d6115a9feab680ab67e5268c193780edff2824ea54255b104d717d9e5b96bbae1b16d73c837e1dc6b4e",
+  "evmAddress": "0x99C0a0818d8aDBED43ae2EC6ea1F2B539B249E5B"
+ },
+ "liveRootKey": {
+  "rpc": "https://rpc.testnet.near.org",
+  "value": "secp256k1:4NfTiv3UsGahebgTaHyD9vF8KYKMBnfd6kh94mK6xv8fGBiJB8TBtFMP5WWXz6B89Ac1fbpzPwAvoyQebemHFwx3",
+  "matchesChainsigConstant": true
+ },
+ "online": {
+  "rpc": "https://rpc.testnet.near.org",
+  "naj": "secp256k1:4SZXcmxyGeQRAZRrvbqxmFS5DJUWRPyiV4DKcijWDPBaAo7qD5yi6sL8vebtKNoAscmddRFPEgcY8Adox9SQZBL9",
+  "evmAddress": "0x99C0a0818d8aDBED43ae2EC6ea1F2B539B249E5B"
+ },
+ "match": true
+}

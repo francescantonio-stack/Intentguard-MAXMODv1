@@ -1,0 +1,82 @@
+{
+ "monad-testnet": {
+  "chainId": 10143,
+  "expected": 10143,
+  "block": 67769417,
+  "usdc": {
+   "address": "0x534b2f3A21130d7a60830c2Df862319e593943A3",
+   "codeBytes": 1798,
+   "name": "USDC",
+   "symbol": "USDC",
+   "decimals": 6
+  },
+  "cctp": {
+   "TokenMessengerV2": {
+    "address": "0x8FE6B999Dc680CcFDD5Bf7EB0974218be2542DAA",
+    "codeBytes": 2175
+   },
+   "MessageTransmitterV2": {
+    "address": "0xE737e5cEBEEBa77EFE34D4aa090756590b1CE275",
+    "codeBytes": 2175,
+    "localDomain": 15
+   },
+   "TokenMinterV2": {
+    "address": "0xb43db544E2c27092c107639Ad201b3dEfAbcF192",
+    "codeBytes": 9295
+   },
+   "MessageV2": {
+    "address": "0xbaC0179bB358A8936169a63408C8481D582390C4",
+    "codeBytes": 281
+   },
+   "expectedDomain": 15
+  },
+  "gasPriceGwei": 102.0,
+  "WMON": {
+   "address": "0xFb8bf4c1CC7a94c73D209a149eA2AbEa852BC541",
+   "codeBytes": 3249
+  },
+  "Multicall3": {
+   "address": "0xcA11bde05977b3631167028862bE2a173976CA11",
+   "codeBytes": 3808
+  }
+ },
+ "base-sepolia": {
+  "chainId": 84532,
+  "expected": 84532,
+  "block": 47622067,
+  "usdc": {
+   "address": "0x036CbD53842c5426634e7929541eC2318f3dCF7e",
+   "codeBytes": 1798,
+   "name": "USDC",
+   "symbol": "USDC",
+   "decimals": 6
+  },
+  "cctp": {
+   "TokenMessengerV2": {
+    "address": "0x8FE6B999Dc680CcFDD5Bf7EB0974218be2542DAA",
+    "codeBytes": 2175
+   },
+   "MessageTransmitterV2": {
+    "address": "0xE737e5cEBEEBa77EFE34D4aa090756590b1CE275",
+    "codeBytes": 2175,
+    "localDomain": 6
+   },
+   "TokenMinterV2": {
+    "address": "0xb43db544E2c27092c107639Ad201b3dEfAbcF192",
+    "codeBytes": 9295
+   },
+   "MessageV2": {
+    "address": "0xbaC0179bB358A8936169a63408C8481D582390C4",
+    "codeBytes": 281
+   },
+   "expectedDomain": 6
+  },
+  "gasPriceGwei": 0.006
+ },
+ "cctpLinkage": {
+  "monad.getLocalToken(6, baseUSDC)": "0x534b2f3a21130d7a60830c2df862319e593943a3",
+  "base.getLocalToken(15, monadUSDC)": "0x036cbd53842c5426634e7929541ec2318f3dcf7e",
+  "monad.remoteTokenMessengers(6)": "0x8fe6b999dc680ccfdd5bf7eb0974218be2542daa",
+  "base.remoteTokenMessengers(15)": "0x8fe6b999dc680ccfdd5bf7eb0974218be2542daa"
+ }
+}
