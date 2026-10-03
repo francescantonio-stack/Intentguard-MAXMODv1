@@ -19,7 +19,7 @@ credentials/
 *secret*.json
 
 # ---- build output / deps ----
-node_modules/
+node_modules
 target/
 out/
 cache/
@@ -30,6 +30,7 @@ lib/
 contracts/evm/lib/*
 !contracts/evm/lib/forge-std
 !contracts/evm/lib/solady
+!scripts/lib/
 
 # local-only artifacts
 deployments/*.local-fork.json
