@@ -1,12 +1,12 @@
 # CLAUDE.md — IntentGuard (Monad Metropolis prototype)
 
 You are helping build a **testnet-only** hackathon prototype for Monad Metropolis (Track 04: Trust, Identity & AI Infrastructure).
-Official submission deadline: 14 Oct 2026 03:59 UTC. **Internal target: submission-ready by the evening of 12 Oct (Europe/Rome).**
+Work is **milestone-based**: there are no internal dates, and the official deadline is the one shown on the platform. Track 04 rewards **protocols, primitives and infrastructure other apps build on**, not standalone consumer products. Judging: product quality, technical excellence, Monad integration, track fit and innovation, 20% each.
 The owner works part-time, with Claude Code. Work in small, verifiable steps. Each milestone below has a "done when" check. Never call a milestone done until its check passes.
 
 ## 1. What we are building
 
-A non-custodial, passkey-approved **AI intent wallet** (installable PWA):
+A **trust-layer primitive for AI agents**: any agent or wallet can move funds only within passkey-signed user policies. They are enforced on NEAR (policy contract + Chain Signatures) and on Monad (`PlanExecutor`, P256 precompile). The installable PWA below is the **reference integration**:
 
 1. The user types a natural-language command, e.g.
    *"Porta 2 USDC da Base su Monad, cambiane metà in MON e metti il resto nel vault. Non spendere più di 5 USDC a settimana."*
@@ -167,18 +167,18 @@ type Intent = {
 
 Amounts are decimal strings. They are converted to bigint with token decimals only in the planner. Never use JS floats for amounts.
 
-## 8. Milestones (ordered; there are no fixed dates; move on as soon as "done when" passes)
+## 8. Milestones (ordered; no dates; move on as soon as "done when" passes)
 
-| # | Milestone | Done when |
-|---|---|---|
-| M0 | Monorepo scaffold, CI, secret scanning, `.env.example` | `pnpm i && pnpm -r build && pnpm -r test` is green in CI. gitleaks passes. `.env.local` is gitignored |
-| M1 | EVM contracts | `forge test` is green, including a WebAuthn test with a **real browser-generated vector** verified through the `0x0100` precompile on `anvil --network monad` (or a fork). Deployed to Monad testnet, with addresses in `/deployments/monad-testnet.json` |
-| M2 | NEAR policy contract + MPC signing | `cargo test` is green (allowlist, caps, rejects, rollback). Deployed to testnet. `scripts/smoke-sign.ts` derives the address, gets a signature via policy→MPC and broadcasts a 0-value tx on Monad testnet; prints the explorer link |
-| M3 | Agent: schema, parsers, planner | Vitest: the demo command + 9 more commands map to the expected intents (LLM mocked). The rules parser handles the demo command. The planner output matches snapshot tests with exact bigint amounts |
-| M4 | PWA on Monad | In a browser (localhost and Vercel HTTPS): onboarding, passkey registration, the command, the plan card, passkey approval, `PlanExecutor.execute` succeeds on Monad testnet, timeline with explorer links |
-| M5 | CCTP cross-chain leg | `scripts/e2e-demo.ts` and the UI both run the full demo command: Base Sepolia burn → attestation → Monad `receiveMessage` → execute. The negative command ("send 50 USDC to 0xabc…") is rejected by the policy and shown in the UI |
-| M6 | Hardening + stretch | Three consecutive clean e2e runs, readable errors, retries for MPC/attestation polling. Stretch only after M5: 1Click `dry` quote panel, Kuru adapter |
-| M7 | Submission assets | README (what is real vs mock, addresses, how to run), `docs/demo-script.md`, `docs/submission.md` (write-up). Repo is public |
+| # | Milestone | Done when | Status |
+|---|---|---|---|
+| M0 | Repo, secret scanning, `.env.example` | Private repo with MIT license; gitleaks clean on full history; forge deps as submodules | done |
+| M1 | EVM contracts | `forge test` green (WebAuthn vectors, Monad fork). Deployed and Sourcify-verified on Monad testnet; addresses in `deployments/monad-testnet.json` | done |
+| M2 | NEAR policy + MPC signing | `cargo test` + sandbox green. Deployed; MPC-signed tx broadcast on Monad; recovered signer = derived address | done |
+| M3 | Agent: schema, parsers, planner | Demo command + 9 more map to the expected intents (LLM mocked); the planner emits exact amounts and the `PlanExecutor.Plan` | todo |
+| M4 | Reference integration (PWA) | Browser: onboarding, real device passkey, command → plan → approval → execute, explorer timeline | todo |
+| M5 | Full cross-chain flow | One passkey-approved plan: Base burn → attestation → Monad `receiveMessage` → `execute`; negatives rejected | done headless (`scripts/cctp-base-to-monad.mjs --execute`); UI todo |
+| M6 | Hardening | Three consecutive clean runs, readable errors, adequate pool liquidity, `maxFee` cap in the CCTP rule | todo |
+| M7 | Submission | Judge-facing English README framed for Track 04 (done); **video ≤ 3 minutes**; **team created** on the platform; project profile with Track 04 + bounties (Mera "One Passkey, Many Keys", Aurora Intents any-chain liquidity, MetaMask Agent Wallet Plugin); repo made **public at submission** with an **OSI license** (MIT); final gitleaks run | todo |
 
 ## 9. Acceptance tests (must pass before submission)
 

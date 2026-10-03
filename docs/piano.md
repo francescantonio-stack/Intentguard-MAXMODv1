@@ -10,14 +10,14 @@
 |---|---|---|
 | Formato | Online, globale. Si partecipa da soli o in team | monad.xyz/metropolis (FAQ) |
 | Iscrizione | **Aperta**. La piattaforma indica "Intake · Open 1 Sep to 13 Oct". Si accede con GitHub, Google o Discord; ogni provider crea un account separato | https://hackathon.monad.xyz |
-| **Deadline di consegna** | L'header della piattaforma mostra **"Oct 14 · 03:59 UTC"**; l'app dichiara "UTC (official event time)". In ora di Roma (CEST, UTC+2): **mercoledì 14/10/2026 alle 05:59**, cioè martedì 13/10 alle 23:59 ora di New York. L'etichetta compare in un tooltip, quindi dopo il login conviene controllare che sia la "Submission deadline" | hackathon.monad.xyz/projects |
-| Obiettivo pratico | **Consegnare entro la sera di lunedì 12/10.** Martedì 13/10 resta come buffer | |
-| Giudizio / risultati | Giudizio dal 14 al 27/10; vincitori annunciati il 3/11 | monad.xyz/metropolis |
-| Cosa si consegna | "A working product with a public project profile: a demo, a short write-up, and a link to the code". Dopo la chiusura i progetti diventano pubblici | FAQ + piattaforma |
-| Open source | Incoraggiato ma non obbligatorio. I giudici devono però poter verificare cosa è stato costruito nelle 6 settimane: il repo pubblico con lo storico dei commit serve a questo | FAQ |
+| **Deadline di consegna** | Quella indicata sulla piattaforma (fa fede l'ora UTC dell'evento) | hackathon.monad.xyz |
+| Obiettivo pratico | Consegnare appena M7 è "fatto", lasciando margine rispetto alla deadline ufficiale | |
+| **Criteri di giudizio** | 5 criteri, **20% ciascuno**: product quality, technical excellence, Monad integration, track fit, innovation | regole ufficiali |
+| Cosa si consegna | Un prodotto funzionante con profilo pubblico del progetto: demo, **video di massimo 3 minuti**, breve write-up e link al codice | regole ufficiali |
+| **Repo e licenza** | Il repo deve essere **pubblico al momento della consegna** e avere una **licenza OSI** (noi: MIT). Fino ad allora resta privato | regole ufficiali |
 | Regola "lavoro nuovo" | Sono ammessi progetti esistenti, ma "what you show on 13 Oct should have been built during the six weeks" (dall'1/09). I nostri documenti di architettura vanno bene; il codice nasce adesso | FAQ |
-| Tracce | 4 tracce, ciascuna da $30.000 divisi fra 3 team ($10.000 a team). Grand Champion da $25.000 scelto fra tutte le tracce. In più ci sono i bounty degli sponsor | monad.xyz/metropolis |
-| Durata del video, deck, criteri di giudizio | **Non pubblicati** sulla pagina pubblica. Le regole ufficiali sono sulla piattaforma, dietro login [DA VERIFICARE dopo l'iscrizione] | |
+| Tracce | 4 tracce. La traccia 04 premia **protocolli, primitive e infrastruttura su cui altre app costruiscono**, non prodotti consumer standalone. In più ci sono il Grand Champion e i bounty degli sponsor | monad.xyz/metropolis + regole |
+| **Team** | Il team va **creato sulla piattaforma** prima della consegna, anche se si partecipa da soli | regole ufficiali |
 | Idoneità (Italia, KYC per i premi) | "Eligibility restrictions are listed in the official rules on the application platform" [DA VERIFICARE dopo l'iscrizione] | monad.xyz/metropolis |
 | Deploy su Monad | La pagina non dice esplicitamente se basta la testnet o serve la mainnet. L'header della piattaforma mostra "Chain ID 143" (mainnet), ma sembra un elemento grafico. Noi usiamo la testnet (chain 10143) [DA VERIFICARE nelle regole] | |
 
@@ -27,13 +27,16 @@
 - **Conclusione: risulta gratuita**, ma non ho visto le regole ufficiali dietro login [DA VERIFICARE leggendo i termini al momento dell'iscrizione]. Se compare una qualsiasi richiesta di pagamento o di wallet/seed, fermarsi: la piattaforma stessa avverte che il team "will never request your wallet's private key or seed phrase".
 
 ### Traccia scelta
-**04: Trust, Identity & AI Infrastructure.** Fra gli esempi della traccia ci sono "Passkey-native accounts using P256 and WebAuthn, with no seed phrase" e l'identità degli agenti. Il nostro punto forte è proprio l'agente AI con guardrail su due livelli: policy su NEAR e approvazione con passkey verificata on-chain su Monad tramite il precompile P256.
+**04: Trust, Identity & AI Infrastructure.** Ci presentiamo come **primitiva / trust layer per agenti AI**. Qualsiasi agente, wallet o dApp può muovere fondi solo dentro policy firmate dall'utente con la passkey. Le policy sono applicate su due livelli:
+- su NEAR, dal policy contract più Chain Signatures;
+- su Monad, da `PlanExecutor`, che verifica la passkey con il precompile P256.
 
-Bounty compatibili, da selezionare se la piattaforma lo consente [DA VERIFICARE i requisiti di ciascuno sulla piattaforma]:
-- "Best Agent Wallet Plugin" ($2.500)
-- "Mera: One Passkey, Many Keys" ($2.500)
-- "Bring Any-Chain Liquidity to Monad" ($5.000; giudice/sponsor probabile Aurora Intents [DA VERIFICARE])
-- Kuru ($5.000), solo se si completa lo stretch goal
+La PWA wallet è l'**integrazione di riferimento**, non il prodotto. Il README in inglese per i giudici segue questa impostazione.
+
+Bounty compatibili, da selezionare nel profilo del progetto:
+- **Mera: "One Passkey, Many Keys"**: una passkey e un account NEAR controllano chiavi EVM deterministiche su ogni chain.
+- **Aurora Intents: liquidità da qualsiasi chain verso Monad**: CCTP V2 reale verso Monad, governato da piani; 1Click come rotta mainnet.
+- **MetaMask: Agent Wallet Plugin**: l'integrazione in 5 chiamate, da impacchettare come plugin.
 
 ---
 
@@ -83,22 +86,20 @@ Bounty compatibili, da selezionare se la piattaforma lo consente [DA VERIFICARE 
 
 ---
 
-## 3. Milestone (in ordine; gli intervalli di giorni sono indicativi)
+## 3. Milestone (in ordine, senza date: conta solo il criterio "fatto")
 
-I "giorni" sono giorni di lavoro part-time contati da oggi, non date fisse. Se si va più veloci si passa alla milestone successiva. **Conta il criterio "fatto".**
-
-| # | Milestone | Indicativo | Fatto quando… |
+| # | Milestone | Fatto quando… | Stato |
 |---|---|---|---|
-| M0 | Setup e account (vedi §5, "cosa fa Max") | giorno 1 | Max è iscritto con la traccia 04. Il repo GitHub pubblico esiste con il primo commit. Hai: un account NEAR testnet, un EOA di sviluppo solo testnet con MON + ETH Base Sepolia, USDC di test su Base Sepolia, una chiave LLM gratuita. `.env.local` compilato e **non** committato |
-| M1 | Contratti EVM (Foundry) | giorni 1–3 | `forge test` passa con `network = "monad"`, compreso un test che verifica una firma WebAuthn reale (vettore fisso) tramite il precompile `0x0100`. `MiniSwap`, `DemoVault`, `PlanExecutor` sono deployati su Monad testnet e gli indirizzi sono in `deployments/monad-testnet.json` |
-| M2 | Policy contract NEAR e firma MPC | giorni 2–4 | `cargo test` passa (allowlist, tetto settimanale, rifiuti). Il contratto è deployato su testnet. Uno script deriva l'indirizzo EVM, chiede la firma via policy→MPC e trasmette una tx da 0 MON su Monad testnet; l'hash è visibile su monadvision |
-| M3 | Agente: schema, parser, planner | giorni 3–5 | Il comando della demo e altri 9 comandi di test producono intenti validi (unit test). Il parser di riserva copre il comando della demo. Il planner genera i passi con importi esatti (6 decimali USDC) |
-| M4 | PWA end-to-end su Monad | giorni 4–7 | Dal browser: login, registrazione passkey, comando, piano, approvazione con passkey, swap e deposito su Monad eseguiti, timeline con link agli explorer. Funziona da URL HTTPS (Vercel) e da telefono |
-| M5 | Passo cross-chain CCTP | giorni 5–8 | Il comando completo porta USDC da Base Sepolia a Monad (burn, attestazione Iris sandbox, `receiveMessage`) e prosegue con swap e deposito in un unico flusso. Il test negativo viene rifiutato e mostrato in UI |
-| M6 | Rifinitura e stretch | giorni 7–9 | Tre esecuzioni consecutive senza errori. Stati di errore leggibili. Gli stretch vanno fatti solo se M5 è chiusa |
-| M7 | Consegna | giorni 8–9 | Fatti README, video, write-up, eventuale deck, profilo del progetto con traccia e bounty. **Consegnato entro la sera di lunedì 12/10.** Martedì 13/10 rimane buffer (e la deadline ufficiale è il 14/10 alle 05:59 ora di Roma) |
+| M0 | Setup e account | Account NEAR testnet (utente + policy), EOA deployer di solo test, MON e USDC/ETH di test, repo GitHub (privato fino alla consegna), nessuna chiave nel repo | ✅ fatto |
+| M1 | Contratti EVM | `forge test` verde con `network = "monad"` e vettori WebAuthn. `MiniSwap`, `DemoVault` e `PlanExecutor` deployati su Monad testnet e verificati, con indirizzi in `deployments/` | ✅ fatto |
+| M2 | Policy NEAR e firma MPC | `cargo test` verde. Contratto deployato. Firma policy→MPC trasmessa su Monad e indirizzo recuperato corretto | ✅ fatto |
+| M3 | Agente: schema, parser, planner | Il comando della demo e altri 9 comandi producono intenti validi. C'è un parser di riserva. Il planner produce importi esatti e il `Plan` di `PlanExecutor` | ⏳ da fare |
+| M4 | Integrazione di riferimento (PWA) | Dal browser: onboarding, passkey reale del dispositivo, comando, piano, approvazione, esecuzione con link agli explorer | ⏳ da fare (c'è un prototipo statico in `app-demo/`) |
+| M5 | Flusso completo cross-chain | Burn su Base → attestazione → `receiveMessage` su Monad → `execute` in un solo piano approvato con la passkey. Il negativo viene rifiutato | ✅ fatto headless (`scripts/cctp-base-to-monad.mjs --execute`); manca nella UI |
+| M6 | Rifinitura | Tre esecuzioni pulite consecutive, errori leggibili, liquidità adeguata nel pool | ⏳ |
+| M7 | Consegna | Le voci della checklist del §6: README per i giudici con taglio da traccia 04 (fatto), video ≤ 3 minuti, repo pubblico con licenza OSI (MIT), team creato, profilo con traccia 04 e bounty | ⏳ |
 
-**Regola di taglio:** se a metà percorso M5 è a rischio, si consegna M4 (tutto su Monad), con CCTP indicato come "next" e la quote 1Click mostrata in UI. La storia per la traccia 04, cioè passkey + policy + agente, regge anche senza il passo cross-chain.
+**Regola di taglio:** se M4 è a rischio, si consegna l'integrazione headless (script + video della demo reale con gli explorer). La primitiva (policy + passkey + Chain Signatures) regge la traccia 04 anche senza UI completa.
 
 ---
 
@@ -146,7 +147,7 @@ Per una demo servono poche decine di richieste al giorno: entrambi i free tier b
 
 ## 5. Cosa deve fare Max di persona (non delegabile a Claude Code)
 1. **Iscriversi** su https://hackathon.monad.xyz con GitHub, che conviene perché serve anche per il repo. Scegliere la **traccia 04** e leggere i termini ufficiali: gratuità, idoneità Italia/KYC, durata del video, deck, criteri, testnet ammessa.
-2. Creare il **repo GitHub pubblico** (es. `intent-guard-monad`).
+2. **Creare il team** sulla piattaforma. Il repo `francescantonio-stack/Intentguard` esiste già: resta privato e va reso **pubblico al momento della consegna**.
 3. Generare un **EOA di sviluppo solo testnet** (`cast wallet new`) per i deploy. La chiave va solo in `.env.local` / keystore Foundry, mai in git e mai in chat.
 4. Creare l'**account NEAR testnet** con near-cli-rs (`--useFaucet`) per sé e uno per il policy contract.
 5. Usare i **faucet**:
@@ -160,14 +161,12 @@ Per una demo servono poche decine di richieste al giorno: entrambi i free tier b
 ---
 
 ## 6. Checklist di consegna
-- [ ] Repo pubblico con licenza MIT, README (cosa fa, architettura, come eseguirlo, indirizzi deployati, cosa è mock e cosa è reale), storico dei commit dal 3/10 in poi.
-- [ ] Indirizzi dei contratti su Monad testnet con link a monadvision/monadscan; hash di una tx demo per ogni passo.
-- [ ] Demo live su URL Vercel, con istruzioni per i giudici (account di test o video se l'onboarding è troppo lungo).
-- [ ] Video: durata secondo le regole [DA VERIFICARE]; se non specificata, 2–3 minuti. Struttura: problema (15s), comando (15s), piano + passkey (30s), esecuzione con explorer (60s), test negativo (20s), architettura (20s).
-- [ ] Write-up breve: problema, soluzione, uso di Monad (P256 precompile, contratti, CCTP), cosa è nato nelle 6 settimane, prossimi passi (1Click in mainnet).
-- [ ] Deck (se richiesto [DA VERIFICARE]): 5–7 slide.
-- [ ] Profilo del progetto sulla piattaforma: traccia 04 + bounty selezionati; consegnato **entro la sera del 12/10**.
-- [ ] Ricontrollo finale: nessuna chiave privata o API key nel repo (`git log -p | grep -i key`; gitleaks).
+- [ ] Team creato sulla piattaforma; profilo del progetto compilato con traccia 04 e bounty (Mera, Aurora Intents, MetaMask Agent Wallet Plugin).
+- [ ] Repo reso **pubblico** al momento della consegna, con licenza **OSI** (MIT, già presente) e storico dei commit.
+- [x] README in inglese per i giudici: problema, primitiva, diagramma, guida di integrazione, integrazione con Monad con indirizzi e link, security model, avviso "solo testnet", AI tools disclosure, codice preesistente, licenza.
+- [ ] **Video di massimo 3 minuti**. Struttura: problema (20s), primitiva e diagramma (30s), approvazione con passkey e firma con policy (40s), CCTP→swap→vault con gli explorer (60s), negativo rifiutato (20s), come si integra un altro agente (10s).
+- [ ] Write-up breve, impostato sui 5 criteri al 20%: qualità del prodotto, eccellenza tecnica, integrazione con Monad (P256 `0x0100`, regole del gas, CCTP), aderenza alla traccia (primitiva per agenti), innovazione.
+- [ ] Ricontrollo finale dei segreti (gitleaks su tutta la storia) prima di rendere pubblico il repo.
 
 ---
 
@@ -181,7 +180,7 @@ Per una demo servono poche decine di richieste al giorno: entrambi i free tier b
 | R4 | La firma WebAuthn non verifica on-chain (DER→r,s, low-S, formato clientDataJSON) | Usare `WebAuthn.sol` di Solady (usa il precompile all'indirizzo 0x100, lo stesso di Monad) e un test con un vettore reale registrato dal browser |
 | R5 | Insidie di Monad: gas addebitato sul limit; riserva di 10 MON per gli account delegati; nonce | Niente EIP-7702. Stima del gas +10% e limit esplicito. Una tx per volta per indirizzo, aspettando la receipt |
 | R6 | Limiti o modifiche del free tier LLM | Parser deterministico sempre attivo; Groq come seconda opzione |
-| R7 | Regole non viste (testnet ammessa? video? KYC?) | Leggerle subito dopo l'iscrizione (M0) e aggiornare questo file |
+| R7 | Il taglio "prodotto consumer" non è premiato dalla traccia 04 | Presentare la primitiva e l'integrazione per terzi; la PWA è solo il riferimento |
 | R8 | Tempo part-time | Regola di taglio; stretch goal solo dopo M5 |
 
 ---
