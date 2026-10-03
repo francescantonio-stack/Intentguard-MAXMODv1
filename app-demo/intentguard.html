@@ -1,0 +1,90 @@
+<!doctype html><html lang="it"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>IntentGuard</title><meta name="theme-color" content="#010805">
+<style>
+*{box-sizing:border-box}body{margin:0;font-family:Inter,system-ui,sans-serif;color:#e6fff4;background:#010805;display:flex;justify-content:center;overflow-x:hidden}
+body:before{content:"";position:fixed;inset:-20%;background:radial-gradient(40% 35% at 20% 15%,#00ff9c55,transparent 70%),radial-gradient(35% 30% at 85% 30%,#00ff9c33,transparent 70%),radial-gradient(45% 40% at 50% 100%,#00b86b44,transparent 70%);animation:f 14s ease-in-out infinite alternate;z-index:-1}
+@keyframes f{to{transform:translate(4%,-3%) rotate(8deg)}}
+.app{width:100%;max-width:430px;min-height:100vh;padding:18px 16px 100px}
+h1{font-size:22px;margin:4px 0 2px;letter-spacing:-.3px}.sub{color:#8fbfa8;font-size:13px;margin-bottom:14px}
+.card{background:linear-gradient(135deg,#ffffff14,#ffffff05);backdrop-filter:blur(18px);-webkit-backdrop-filter:blur(18px);border:1px solid #ffffff1f;border-radius:22px;padding:16px;margin:12px 0;box-shadow:0 8px 32px #0006}
+.bal{font-size:40px;font-weight:800;letter-spacing:-1px;background:linear-gradient(90deg,#fff,#7dffcb 50%,#00ff9c);-webkit-background-clip:text;color:transparent}
+.row{display:flex;justify-content:space-between;align-items:center;font-size:14px;margin:7px 0}
+.grid{display:grid;grid-template-columns:1fr 1fr;gap:10px}.grid .card{margin:0;padding:14px}.big{font-size:22px;font-weight:700}
+button{width:100%;padding:15px;border:1px solid #ffffff1f;border-radius:16px;font-size:15px;font-weight:600;margin-top:10px;cursor:pointer;background:#ffffff0d;color:#e6fff4;backdrop-filter:blur(10px);transition:.2s}
+button:active{transform:scale(.97)}
+.p{background:linear-gradient(135deg,#00ff9c,#00c46a 60%,#39ffb0);border:0;color:#002814;text-shadow:none;box-shadow:0 6px 24px #00ff9c77}
+.d{background:#ff3d6b22;border-color:#ff3d6b55;color:#ff9fb4}
+textarea{width:100%;height:96px;border-radius:18px;border:1px solid #ffffff22;background:#ffffff0a;color:#e6fff4;padding:14px;font-size:15px;backdrop-filter:blur(12px);resize:none}
+.chips button{width:auto;padding:8px 12px;font-size:12px;margin:6px 6px 0 0;border-radius:20px}
+.step{display:flex;gap:12px;align-items:center;font-size:14px;margin:10px 0}.dot{min-width:26px;height:26px;border-radius:50%;background:#ffffff14;display:flex;align-items:center;justify-content:center;font-size:12px}
+.ok .dot{background:#2bd38a;color:#000;box-shadow:0 0 12px #2bd38a}.run .dot{background:#00ff9c;box-shadow:0 0 14px #00ff9c;animation:pu 1s infinite}@keyframes pu{50%{opacity:.5}}
+.nav{position:fixed;bottom:14px;left:0;right:0;display:flex;justify-content:center;padding:0 16px}
+.nav div{display:flex;max-width:400px;width:100%;background:#03140ccc;backdrop-filter:blur(20px);border:1px solid #ffffff1f;border-radius:24px;padding:6px}
+.nav button{margin:0;border:0;background:none;font-size:11px;padding:8px 0;border-radius:18px;display:flex;flex-direction:column;align-items:center;gap:3px}
+.nav button span{font-size:20px}.nav .ai{background:linear-gradient(135deg,#00ff9c,#39ffb0);color:#002814;box-shadow:0 4px 18px #00ff9c88}
+.s{display:none;animation:in .35s}.s.on{display:block}@keyframes in{from{opacity:0;transform:translateY(8px)}}
+.tag{font-size:11px;background:#00ff9c33;border:1px solid #00ff9c66;padding:4px 9px;border-radius:20px;color:#b6ffe0}
+.bad{color:#ff8fa3}.good{color:#7df0b5}small{color:#8fbfa8}a{color:#5dffb8}
+.bar{height:8px;background:#ffffff14;border-radius:5px;overflow:hidden}.bar i{display:block;height:100%;background:linear-gradient(90deg,#00ff9c,#39ffb0);transition:width .6s}
+svg{width:100%;height:90px;display:block}
+body:after{content:"";position:fixed;inset:0;background:url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='160' height='160'><g fill='none' stroke='%2300ff9c' stroke-opacity='.16' stroke-width='1.2'><path d='M0 40h40l20 20h40l20-20h40M0 120h30l20-20h50l20 20h40M80 0v30l-20 20v40M120 160v-30l20-20V70'/></g><g fill='%2300ff9c' fill-opacity='.5'><circle cx='40' cy='40' r='2.5'/><circle cx='100' cy='60' r='2.5'/><circle cx='50' cy='100' r='2.5'/><circle cx='60' cy='90' r='2.5'/><circle cx='140' cy='70' r='2.5'/><circle cx='80' cy='30' r='2.5'/></g></svg>");z-index:-1;animation:led 3s ease-in-out infinite}
+@keyframes led{50%{opacity:.55}}
+.card{border-color:#00ff9c33;box-shadow:0 0 0 1px #00ff9c14,0 0 24px #00ff9c1f,inset 0 0 22px #00ff9c0d}
+h1,.big{text-shadow:0 0 10px #00ff9c88}.bal{filter:drop-shadow(0 0 12px #00ff9c99)}
+.tag{box-shadow:0 0 10px #00ff9c55}.tag:first-letter{color:#00ff9c}
+.p,.nav .ai{box-shadow:0 0 18px #00ff9caa,0 0 42px #00ff9c55}
+.nav div{border-color:#00ff9c44;box-shadow:0 0 20px #00ff9c33}
+svg path[stroke]{filter:drop-shadow(0 0 6px #00ff9c)}
+.bar i{box-shadow:0 0 10px #00ff9c}
+</style></head><body><div class="app">
+
+<div id="onb" class="s on"><h1>IntentGuard</h1><div class="sub">Un comando. Ogni chain. Regole che l'AI non può infrangere.</div>
+<div class="card"><b>Nessuna seed phrase</b><br><small>Il tuo account NEAR è protetto dalla passkey del telefono.</small></div>
+<div class="card"><b>Un indirizzo per tutte le chain</b><br><small>Derivato con NEAR Chain Signatures: uguale su Monad e Base.</small></div>
+<button class="p" onclick="pass('Crea account con passkey',()=>go('home'))">🔐 Crea account con passkey</button>
+<button onclick="go('home')">Ho già un account</button></div>
+
+<div id="home" class="s"><div class="row"><div><small>Bentornato</small><h1>Max</h1></div><span class="tag">● Monad Testnet</span></div>
+<div class="card"><small>Patrimonio su tutte le chain</small><div class="bal">$12,40</div><small class="good">+0,8% oggi · rendimento vault 4,1%*</small>
+<svg viewBox="0 0 300 90" preserveAspectRatio="none"><defs><linearGradient id="g" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#00ff9c" stop-opacity=".6"/><stop offset="1" stop-color="#00ff9c" stop-opacity="0"/></linearGradient></defs><path d="M0 75 L30 68 L60 72 L90 55 L120 60 L150 42 L180 48 L210 30 L240 36 L270 18 L300 10 L300 90 L0 90Z" fill="url(#g)"/><path d="M0 75 L30 68 L60 72 L90 55 L120 60 L150 42 L180 48 L210 30 L240 36 L270 18 L300 10" fill="none" stroke="#00ff9c" stroke-width="2.5"/></svg>
+<small>0x99C0…9E5B · max.testnet · stesso indirizzo su ogni chain</small></div>
+<div class="grid"><div class="card"><small>USDC · Monad</small><div class="big">4,00</div></div><div class="card"><small>MON · Monad</small><div class="big">2,10</div></div><div class="card"><small>USDC · Base</small><div class="big">6,00</div></div><div class="card"><small>Nel vault</small><div class="big">0,30</div></div></div>
+<div class="card"><div class="row"><span>🛡️ Tetto settimanale</span><span id="capt">0 / 5 USDC</span></div><div class="bar"><i id="capb" style="width:0%"></i></div></div>
+<button class="p" onclick="go('cmd')">✨ Chiedi all'agente</button><small>*dato di esempio del prototipo</small></div>
+
+<div id="cmd" class="s"><h1>Cosa vuoi fare?</h1><div class="sub">Scrivi come in chat.</div>
+<textarea id="t">Porta 2 USDC da Base su Monad, cambiane metà in MON e metti il resto nel vault.</textarea>
+<div class="chips"><button onclick="t.value='Porta 2 USDC da Base su Monad, cambiane metà in MON e metti il resto nel vault.'">Demo</button><button onclick="t.value='Manda 50 USDC a 0xabc123…'">Prova attacco</button><button onclick="t.value='Metti 1 USDC nel vault'">Solo vault</button></div>
+<button class="p" onclick="plan()">Genera piano</button><button onclick="go('home')">Annulla</button></div>
+
+<div id="plan" class="s"><h1>Il piano</h1><div class="sub">Controlla prima di approvare.</div><div class="card" id="pl"></div>
+<div class="card"><div class="row"><span>Policy NEAR</span><span id="pv"></span></div><div class="row"><span>Costo gas stimato</span><span>~0,03 MON</span></div><div class="row"><span>Simulazione</span><span class="good">✓ OK</span></div></div>
+<div id="pb"></div><button onclick="go('cmd')">Modifica</button></div>
+
+<div id="exec" class="s"><h1>In esecuzione</h1><div class="sub">Firmato con NEAR Chain Signatures</div><div class="card" id="ex"></div><div id="done"></div></div>
+
+<div id="rules" class="s"><h1>Le mie regole</h1><div class="sub">Salvate on-chain nel policy contract NEAR. L'AI non può cambiarle.</div>
+<div class="card"><div class="row"><span>Tetto settimanale</span><b>5 USDC</b></div><div class="row"><span>Max per piano</span><b>3 USDC</b></div></div>
+<div class="card"><b>Destinatari ammessi</b><div class="row"><span>Il mio indirizzo</span><span class="good">✓</span></div></div>
+<div class="card"><b>Contratti ammessi</b><div class="row"><span>Circle CCTP</span><span class="good">✓</span></div><div class="row"><span>MiniSwap</span><span class="good">✓</span></div><div class="row"><span>Vault USDC</span><span class="good">✓</span></div></div>
+<button onclick="pass('Modifica regole',()=>alert('Regole aggiornate on-chain'))">✏️ Modifica (serve passkey)</button><button class="d" onclick="alert('Kill-switch attivato: nessuna firma possibile')">⛔ Blocca tutto</button></div>
+
+<div id="hist" class="s"><h1>Storico</h1><div class="sub">Ogni intento è verificabile on-chain.</div><div id="hl"><div class="card"><small>Nessuna operazione ancora.</small></div></div></div>
+
+<div id="pk" class="s"><div class="card" style="text-align:center;margin-top:120px"><div style="font-size:60px">👆</div><b id="pkt"></b><br><small>Conferma con impronta o Face ID</small><button class="p" id="pkb">Conferma</button></div></div>
+
+</div><div class="nav"><div><button onclick="go('home')"><span>◎</span>Portafoglio</button><button class="ai" onclick="go('cmd')"><span>✨</span>Agente</button><button onclick="go('rules')"><span>🛡️</span>Regole</button><button onclick="go('hist')"><span>⛓️</span>Storico</button></div></div>
+<script>
+let spent=0,bad=false,hist=[];const $=i=>document.getElementById(i);
+function go(i){document.querySelectorAll('.s').forEach(e=>e.classList.remove('on'));$(i).classList.add('on');scrollTo(0,0)}
+function pass(txt,cb){$('pkt').textContent=txt;$('pkb').onclick=cb;go('pk')}
+function plan(){const v=$('t').value.toLowerCase();bad=/0x|50/.test(v);let s;
+if(bad){s=[['Invia 50 USDC a 0xabc123…','Monad']];$('pv').innerHTML='<span class="bad">✕ Rifiutato</span>';
+$('pb').innerHTML='<div class="card bad">⛔ Bloccato dalla policy on-chain: destinatario non ammesso e importo oltre il tetto (50 > 5 USDC). Nessuna firma è stata richiesta.</div>';}
+else{s=v.includes('base')?[['Sposta 2 USDC da Base a Monad','Circle CCTP'],['Cambia 1 USDC in MON','MiniSwap'],['Deposita 1 USDC nel vault','Vault']]:[['Deposita 1 USDC nel vault','Vault']];
+$('pv').innerHTML='<span class="good">✓ Entro i limiti</span>';$('pb').innerHTML='<button class="p" onclick="pass(\'Approva piano\',run)">👆 Approva con passkey</button>';}
+window.steps=s;$('pl').innerHTML='<small>Hai chiesto: “'+$('t').value+'”</small>'+s.map((x,i)=>'<div class="step"><div class="dot">'+(i+1)+'</div><div>'+x[0]+'<br><small>'+x[1]+'</small></div></div>').join('');go('plan')}
+function run(){go('exec');$('done').innerHTML='';const s=steps;let i=0;const r=()=>{$('ex').innerHTML=s.map((x,j)=>'<div class="step '+(j<i?'ok':j==i?'run':'')+'"><div class="dot">'+(j<i?'✓':j+1)+'</div><div>'+x[0]+'<br><small>'+(j<i?'confermato · 0,4 s':j==i?'in corso…':'in attesa')+'</small></div></div>').join('');
+if(i<s.length){i++;setTimeout(r,900)}else{const amt=s.length>1?2:1;spent+=amt;$('capt').textContent=spent+' / 5 USDC';$('capb').style.width=Math.min(100,spent*20)+'%';
+hist.unshift($('t').value);$('hl').innerHTML=hist.map(h=>'<div class="card"><div class="row"><span>✓ Eseguito</span><a href="#">explorer ↗</a></div><small>'+h+'</small></div>').join('');
+$('done').innerHTML='<div class="card good">✅ Fatto in '+(s.length*0.4).toFixed(1)+' s su Monad.</div><button class="p" onclick="go(\'home\')">Torna alla home</button>'}};r()}
+</script></body></html>
