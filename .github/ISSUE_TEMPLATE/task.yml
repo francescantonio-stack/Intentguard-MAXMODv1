@@ -1,0 +1,22 @@
+name: Task for the agents
+description: A unit of work for the agent pipeline (spec -> contracts -> audit -> frontend -> deploy)
+labels: []
+body:
+  - type: dropdown
+    id: start
+    attributes:
+      label: Start with
+      description: After creating the issue, add the matching label (e.g. agente:architetto) to start the agent.
+      options: [agente:architetto, agente:contratti, agente:frontend, agente:deploy]
+    validations: { required: true }
+  - type: textarea
+    id: goal
+    attributes: { label: Goal, description: What should change and why }
+    validations: { required: true }
+  - type: textarea
+    id: done
+    attributes: { label: Done when, description: Checks that must pass }
+    validations: { required: true }
+  - type: textarea
+    id: invariants
+    attributes: { label: Invariants touched, description: "e.g. I1 weekly cap, I2 passkey over exact plan" }

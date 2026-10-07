@@ -94,8 +94,8 @@ Bounty compatibili, da selezionare nel profilo del progetto:
 | M1 | Contratti EVM | `forge test` verde con `network = "monad"` e vettori WebAuthn. `MiniSwap`, `DemoVault` e `PlanExecutor` deployati su Monad testnet e verificati, con indirizzi in `deployments/` | ✅ fatto |
 | M2 | Policy NEAR e firma MPC | `cargo test` verde. Contratto deployato. Firma policy→MPC trasmessa su Monad e indirizzo recuperato corretto | ✅ fatto |
 | M3 | Agente: schema, parser, planner | Il comando della demo e altri 9 comandi producono intenti validi. C'è un parser di riserva. Il planner produce importi esatti e il `Plan` di `PlanExecutor` | ✅ fatto (`packages/core`, 35 test). Gli adapter Gemini/Groq vanno nell'app |
-| M4 | Integrazione di riferimento (PWA) | Dal browser: onboarding, passkey reale del dispositivo, comando, piano, approvazione, esecuzione con link agli explorer | ⏳ da fare (c'è un prototipo statico in `app-demo/`) |
-| M5 | Flusso completo cross-chain | Burn su Base → attestazione → `receiveMessage` su Monad → `execute` in un solo piano approvato con la passkey. Il negativo viene rifiutato | ✅ fatto headless (`scripts/cctp-base-to-monad.mjs --execute`); manca nella UI |
+| M4 | Integrazione di riferimento (PWA) | Dal browser: onboarding, passkey reale del dispositivo, comando, piano, approvazione, esecuzione con link agli explorer | 🟡 codice fatto (`apps/web`, PWA Next.js); manca una prova dal telefono con l'URL Vercel |
+| M5 | Flusso completo cross-chain | Burn su Base → attestazione → `receiveMessage` su Monad → `execute` in un solo piano approvato con la passkey. Il negativo viene rifiutato | ✅ fatto headless; 🟡 collegato nella PWA (`runPlan`), manca una esecuzione reale dalla UI |
 | M6 | Rifinitura | Tre esecuzioni pulite consecutive, errori leggibili, liquidità adeguata nel pool | ⏳ |
 | M7 | Consegna | Le voci della checklist del §6: README per i giudici con taglio da traccia 04 (fatto), video ≤ 3 minuti, repo pubblico con licenza OSI (MIT), team creato, profilo con traccia 04 e bounty | ⏳ |
 

@@ -70,7 +70,7 @@ sequenceDiagram
 
 ## Integration guide (for third-party agents and wallets)
 
-An app needs no IntentGuard SDK. It makes five calls. The reference implementation is in [`scripts/lib/mpc.mjs`](scripts/lib/mpc.mjs) (`commitPlan`, `signAndSend`) and [`scripts/cctp-base-to-monad.mjs`](scripts/cctp-base-to-monad.mjs).
+An app needs no IntentGuard SDK. It makes five calls. The TypeScript reference implementation is [`packages/signer`](packages/signer) (`PolicyClient`, `signAndSend`, `runPlan`) on top of [`packages/core`](packages/core) (intent schema, deterministic planner, `planHash`, WebAuthn struct); the original Node scripts are in [`scripts/`](scripts).
 
 1. **Onboard (user's wallet or full-access key, once).**
    - `set_weekly_cap(weekly_cap)` and `add_recipient(<derived EVM address>)` on the policy contract, each with a 1 yocto deposit.
@@ -92,9 +92,29 @@ Allowlisted rule kinds today:
 
 New protocols are added by the policy owner as `(chain, contract, selector) → rule`.
 
+### Plug in any AI agent (MCP)
+
+[`packages/mcp`](packages/mcp) is a Model Context Protocol server. An agent gets **read + propose** access and **no keys**:
+
+| Tool | What it does |
+|---|---|
+| `intentguard_status` | derived address, allowance left on NEAR and Monad, passkey registration, balances |
+| `intentguard_propose_plan` | natural language or structured intent → checked plan + approval link; out-of-policy plans come back `BLOCKED` with the reason |
+| `intentguard_recent_decisions` | the policy contract's latest allowed / rejected requests |
+
+```bash
+claude mcp add intentguard -e NEAR_USER=<you>.testnet -e APP_URL=https://<your-app> -- npx tsx <repo>/packages/mcp/src/server.ts
+```
+
+The user opens the link, sees the same plan rebuilt from on-chain state, and approves it with the passkey. A prompt-injected agent can propose anything; nothing outside the policy gets signed.
+
+## Reference app (PWA)
+
+[`apps/web`](apps/web) (Next.js, installable): setup (NEAR account, on-device function-call key, passkey, registration on Monad), command → plan → one passkey approval → policy-gated execution with explorer links, a live **guard log** of the policy contract, and an **attack demo** where a hijacked agent is stopped three times: by the planner, by the NEAR policy on-chain, and by `PlanExecutor`'s passkey check. LLM keys stay server-side; the deterministic parser keeps it working without them.
+
 ## Monad integration
 
-- **P256 precompile `0x0100` (EIP-7951 on Monad)** verifies WebAuthn passkeys on-chain inside `PlanExecutor`. A live probe against Monad testnet confirms it: a valid assertion is accepted and a tampered one rejected (`scripts/live-checks/webauthn_live_probe.sh`).
+- **P256 precompile `0x0100` (EIP-7951 on Monad)** verifies WebAuthn passkeys on-chain inside `PlanExecutor`. A live probe against Monad testnet confirms it: a valid assertion is accepted and a tampered one rejected (`scripts/live-checks/webauthn_live_probe.sh`). The whole `WebAuthn.verify` costs about **10.5k gas** with the precompile (`contracts/evm/test/MonadGas.t.sol`), cheap enough to check the passkey on every plan.
 - **Monad-aware engineering:** Foundry with `network = "monad"`. Monad charges the gas **limit**, so every tx uses estimate × 1.25 and the policy caps the gas limit and fees. One tx at a time per address.
 - **Real cross-chain liquidity into Monad:** Circle CCTP V2 fast transfer from Base Sepolia (domain 6) to Monad (domain 15). The attestation comes from Circle's Iris sandbox API.
 
@@ -139,6 +159,7 @@ Every hash is in [`deployments/`](deployments/).
 | Unlimited approvals, foreign spenders | `approve` is allowed only on USDC, only to the allowlisted spender, and the amount must be ≤ the plan budget. |
 | Replay, cross-chain or cross-deployment replay | `planHash` binds chain id and contract address. There is a per-account nonce, `executed[hash]` and a deadline. |
 | Forged passkey approval | WebAuthn verification on-chain (P256 precompile) with user verification required. Low-S signatures are enforced by Solady. |
+| Hijacked or prompt-injected agent | The agent only proposes. Off-chain planner, NEAR policy and `PlanExecutor` each refuse plans outside the policy; invariant tests fuzz replays, foreign passkeys, edited plans and time jumps (`contracts/evm/test/PlanExecutorInvariant.t.sol`). |
 | MPC failure mid-plan | The callback returns the signature slot, so the plan can retry. |
 
 Known limits:
@@ -153,11 +174,15 @@ Known limits:
 - **Track 04, Trust, Identity & AI Infrastructure.** IntentGuard is a primitive: a passkey identity, user-signed spending policies and on-chain enforcement that other agents and wallets plug into. It is not a closed consumer app.
 - **Mera: "One Passkey, Many Keys".** One device passkey plus one NEAR account control deterministic secp256k1 keys on every EVM chain via Chain Signatures, with no seed phrase.
 - **Aurora Intents: any-chain liquidity to Monad.** Real CCTP V2 into Monad, gated by intent plans. A NEAR Intents 1Click route is the mainnet path; 1Click has no testnet.
-- **MetaMask Agent Wallet Plugin.** The 5-call integration above is designed to be wrapped as an agent-wallet plugin: plan → passkey → policy-gated signing. The plugin itself is not built yet.
+- **MetaMask Agent Wallet Plugin.** The 5-call integration and the MCP server give agents a plan → passkey → policy-gated signing flow. A MetaMask Snap wrapper is not built.
 
 ## Repo layout and setup
 
 ```
+apps/web/               reference PWA (Next.js): setup, plan + passkey approval, execution timeline, guard log, attack demo
+packages/core/          intent schema (zod), rules parser, deterministic planner, planHash, WebAuthn struct (bigint only)
+packages/signer/        NEAR policy client, Chain Signatures derivation, MPC signing pipeline, CCTP helpers, plan runner
+packages/mcp/           MCP server for AI agents (read + propose, no keys)
 contracts/evm/          Foundry: PlanExecutor, MiniSwap, DemoVault, Deploy.s.sol, tests (forge-std, solady as submodules)
 contracts/near-policy/  Rust near-sdk 5: policy contract + unit tests + local sandbox test
 contracts/mock-mpc/     mock MPC signer (local sandbox only)
@@ -170,6 +195,7 @@ docs/                   project plan (IT), CLAUDE.md, prompts
 ```bash
 git clone --recurse-submodules https://github.com/francescantonio-stack/Intentguard && cd Intentguard
 ./run-all-checks.sh   # forge tests, Monad-fork test, cargo tests, NEAR sandbox, read-only live checks
+pnpm install && pnpm -r test && pnpm --filter @intentguard/web dev   # TS packages + the PWA on localhost:3000
 ```
 
 Requirements: Foundry ≥ 1.8, Rust stable with the `wasm32-unknown-unknown` target, `cargo-near` 0.22, Node 20, Python 3 with `cryptography`.
@@ -180,7 +206,8 @@ Results on a fresh clone:
 
 | Suite | Result |
 |---|---|
-| Foundry | 39 passed, 2 skipped |
+| Foundry (unit, fuzz, 5 invariants over 8,192 random calls, WebAuthn vectors incl. one produced by Chromium through the app's code) | 43 passed, 2 skipped |
+| TypeScript (core, signer, MCP) | 56 passed |
 | Monad testnet fork | 2 passed |
 | NEAR unit | 26 passed |
 | NEAR sandbox (policy → mock MPC → callback) | passed |
