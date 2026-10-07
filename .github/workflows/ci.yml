@@ -16,7 +16,7 @@ concurrency:
 
 jobs:
   core:
-    name: core (schema, parser, planner)
+    name: ts (core, signer, mcp, web)
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -28,6 +28,9 @@ jobs:
       - run: pnpm install --frozen-lockfile
       - run: pnpm -r typecheck
       - run: pnpm -r test
+      - run: pnpm --filter @intentguard/web build
+        env:
+          NEXT_TELEMETRY_DISABLED: "1"
 
   evm:
     name: evm (forge test)

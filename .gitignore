@@ -35,3 +35,7 @@ contracts/evm/lib/*
 # local-only artifacts
 deployments/*.local-fork.json
 .DS_Store
+
+# Next.js
+.next/
+*.tsbuildinfo

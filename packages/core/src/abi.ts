@@ -22,6 +22,16 @@ export const planExecutorAbi = parseAbi([
   "function remainingThisPeriod(address) view returns (uint256)",
   "function registerPasskey(bytes32 x,bytes32 y,uint256 weeklyCap)",
   "function passkeys(address) view returns (bytes32 x,bytes32 y)",
+  "error NotRegistered()",
+  "error InvalidSignature()",
+  "error BadNonce(uint256 expected,uint256 got)",
+  "error Expired()",
+  "error AlreadyExecuted()",
+  "error InvalidAmounts()",
+  "error OverPlanLimit(uint256 amountIn,uint256 maxPlanAmount)",
+  "error OverWeeklyCap(uint256 requested,uint256 remaining)",
+  "error AlreadyRegistered()",
+  "error InvalidCap()",
   "event PlanExecuted(bytes32 indexed planHash,address indexed account,uint256 amountIn,uint256 swapAmount,uint256 amountOut,uint256 vaultShares)",
 ]);
 

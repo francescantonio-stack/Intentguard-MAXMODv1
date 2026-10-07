@@ -1,0 +1,11 @@
+{
+ "challenge": "0x5e684f0da345231ea31b267600824e68a2b06e4a489ec4a574643e7ab4c65147",
+ "authenticatorData": "0x49960de5880e8c687434170f6476605b8fe4aeb9a28632c7995cf3ba831d97630500000002",
+ "clientDataJSON": "{\"type\":\"webauthn.get\",\"challenge\":\"XmhPDaNFIx6jGyZ2AIJOaKKwbkpInsSldGQ-erTGUUc\",\"origin\":\"http://localhost:3100\",\"crossOrigin\":false}",
+ "challengeIndex": 23,
+ "typeIndex": 1,
+ "r": "0x15e500c362e3fef457e68a29111aa22020fab783a729aa594505d541a1999c96",
+ "s": "0x35ed11f5e82afd31fb47b5feb58c960c00b933ceffa434ae131d46a00b85c1ac",
+ "x": "0x6d277692a2c779ca4f1c76cc5a07144767d2aade3c4292c20750502447ed7650",
+ "y": "0x9237fbfc90b8da971c7c61b22bead29cb46c5edae5e974dcb094aa47336a65ea"
+}

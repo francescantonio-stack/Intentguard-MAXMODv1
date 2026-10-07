@@ -1,5 +1,5 @@
 import {
-  buildPlan, encodeIntentParam, IntentSchema, parseRules, PolicyError, ParseError, summarizePlan, toJson, type Intent,
+  buildPlan, encodeIntentParam, IntentSchema, toUnits, parseRules, PolicyError, ParseError, summarizePlan, toJson, type Intent,
 } from "@intentguard/core";
 import { ZodError } from "zod";
 import {
@@ -46,7 +46,7 @@ export async function proposePlan(e: McpEnv, input: { command?: string; intent?:
 
     const s = await readState(e.cfg, policyOf(e), accountOf(e));
     const bridge = intent.actions.find((a) => a.type === "bridge");
-    const cctpMaxFee = bridge ? await cctpFastMaxFee(e.cfg.irisApi, BigInt(Math.round(Number(bridge.amount) * 1e6))) : undefined;
+    const cctpMaxFee = bridge ? await cctpFastMaxFee(e.cfg.irisApi, toUnits(bridge.amount, "USDC")) : undefined;
     const plan = buildPlan(intent, planContext(s, { cctpMaxFee }));
     const approveUrl = `${e.appUrl}/?intent=${encodeIntentParam(intent)}`;
     return {

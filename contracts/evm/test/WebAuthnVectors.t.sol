@@ -67,4 +67,16 @@ contract WebAuthnVectorsTest is Test {
             )
         );
     }
+
+    /// Assertion produced by Chromium's WebAuthn stack (CDP virtual authenticator, user verification on) through
+    /// the reference app's own code: apps/web setup page -> createPasskey (x, y via getPublicKey) and
+    /// navigator.credentials.get with the plan hash as challenge -> core buildWebAuthnAuth (DER -> r, low-S).
+    function test_chromiumVirtualAuthenticatorVector() public view {
+        string memory j = _load("chromium_virtual_vector.json");
+        WebAuthn.WebAuthnAuth memory a = _auth(j);
+        bytes32 x = vm.parseJsonBytes32(j, ".x");
+        bytes32 y = vm.parseJsonBytes32(j, ".y");
+        assertTrue(WebAuthn.verify(vm.parseJsonBytes(j, ".challenge"), true, a, x, y));
+        assertFalse(WebAuthn.verify(abi.encodePacked(keccak256("another plan")), true, a, x, y));
+    }
 }
