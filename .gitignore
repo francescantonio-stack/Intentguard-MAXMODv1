@@ -31,6 +31,7 @@ contracts/evm/lib/*
 !contracts/evm/lib/forge-std
 !contracts/evm/lib/solady
 !scripts/lib/
+!apps/web/lib/
 
 # local-only artifacts
 deployments/*.local-fork.json

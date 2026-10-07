@@ -102,3 +102,15 @@ describe("guardLog", () => {
     expect(log[0]!.time).toBe("2026-09-21T14:13:20.000Z");
   });
 });
+
+describe("NEAR tx hash (keySender polls by it)", () => {
+  it("equals the hash near-api-js signs", async () => {
+    const { KeyPair, KeyPairSigner, actions, baseEncode, createTransaction, encodeTransaction } = await import("near-api-js");
+    const { sha256 } = await import("@noble/hashes/sha256");
+    const kp = KeyPair.fromRandom("ed25519");
+    const tx = createTransaction("u.testnet", kp.getPublicKey(), "policy.testnet", 7n,
+      [actions.functionCall("commit_plan", { a: 1 }, 30_000_000_000_000n, 0n)], new Uint8Array(32).fill(9));
+    const { txHash, signedTransaction } = await new KeyPairSigner(kp).signTransaction(tx);
+    expect(baseEncode(sha256(encodeTransaction(signedTransaction.transaction)))).toBe(baseEncode(txHash));
+  });
+});

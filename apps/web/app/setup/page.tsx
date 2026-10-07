@@ -13,7 +13,7 @@ import { loadSetup, saveSetup, type Setup } from "@/lib/store";
 
 const cli = (user: string, fcPublicKey: string, derived: string) => [
   `# 0. (only if you have no testnet account yet)\nnear account create-account sponsor-by-faucet-service ${user} autogenerate-new-keypair save-to-legacy-keychain network-config testnet create`,
-  `# 1. allow this device to ask for plan signatures (function-call key, policy contract only)\nnear account add-key ${user} grant-function-call-access --allowance '0.5 NEAR' --contract-account-id ${POLICY} --function-names 'commit_plan, cancel_plan, request_signature' use-manually-provided-public-key ${fcPublicKey} network-config testnet sign-with-legacy-keychain send`,
+  `# 1. allow this device to ask for plan signatures (function-call key, policy contract only)\nnear account add-key ${user} grant-function-call-access --allowance '1 NEAR' --contract-account-id ${POLICY} --function-names 'commit_plan, cancel_plan, request_signature' use-manually-provided-public-key ${fcPublicKey} network-config testnet sign-with-legacy-keychain send`,
   `# 2. register with a weekly cap of 5 USDC (needs your full-access key: 1 yoctoNEAR)\nnear contract call-function as-transaction ${POLICY} set_weekly_cap json-args '{"weekly_cap":"5000000"}' prepaid-gas '30 Tgas' attached-deposit '1 yoctoNEAR' sign-as ${user} network-config testnet sign-with-legacy-keychain send`,
   `# 3. allow your own derived address as recipient (CCTP mint, PlanExecutor)\nnear contract call-function as-transaction ${POLICY} add_recipient json-args '{"address":"${derived.toLowerCase()}"}' prepaid-gas '30 Tgas' attached-deposit '1 yoctoNEAR' sign-as ${user} network-config testnet sign-with-legacy-keychain send`,
 ];
