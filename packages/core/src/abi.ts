@@ -21,6 +21,8 @@ export const planExecutorAbi = parseAbi([
   "function nonces(address) view returns (uint256)",
   "function remainingThisPeriod(address) view returns (uint256)",
   "function registerPasskey(bytes32 x,bytes32 y,uint256 weeklyCap)",
+  "function passkeys(address) view returns (bytes32 x,bytes32 y)",
+  "event PlanExecuted(bytes32 indexed planHash,address indexed account,uint256 amountIn,uint256 swapAmount,uint256 amountOut,uint256 vaultShares)",
 ]);
 
 export const miniSwapAbi = parseAbi([

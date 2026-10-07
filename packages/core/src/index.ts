@@ -5,3 +5,4 @@ export * from "./parser";
 export * from "./planHash";
 export * from "./planner";
 export * from "./schema";
+export * from "./webauthn";
