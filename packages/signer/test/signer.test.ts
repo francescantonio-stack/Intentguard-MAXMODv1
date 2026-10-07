@@ -77,3 +77,28 @@ describe("PolicyClient", () => {
     expect(failureReason(failure)).toBe("weekly cap exceeded (requested 6000000 > remaining 5000000 USDC base units)");
   });
 });
+
+describe("guardLog", () => {
+  afterEach(() => vi.unstubAllGlobals());
+  it("lists accepted and rejected policy calls with the rejection reason", async () => {
+    const nearblocks = vi.fn(async () => ({
+      ok: true,
+      json: async () => ({
+        txns: [
+          { transaction_hash: "A", signer_account_id: "u.testnet", block_timestamp: "1790000000000000000", actions: [{ action: "FUNCTION_CALL", method: "request_signature" }], outcomes: { status: false } },
+          { transaction_hash: "B", signer_account_id: "u.testnet", block_timestamp: "1790000001000000000", actions: [{ action: "FUNCTION_CALL", method: "commit_plan" }], outcomes: { status: true } },
+        ],
+      }),
+    }));
+    vi.stubGlobal("fetch", vi.fn(async () => ({
+      json: async () => ({ result: { status: { Failure: { ActionError: { kind: { FunctionCallError: { ExecutionError: "Smart contract panicked: policy: recipient 0xabc not in your allowlist" } } } } } } }),
+    })));
+    const { guardLog } = await import("../src/guard");
+    const log = await guardLog({ policy: "p.testnet", nearRpc: "https://rpc", fetcher: nearblocks as unknown as typeof fetch });
+    expect(log.map((e) => [e.method, e.ok, e.reason])).toEqual([
+      ["request_signature", false, "recipient 0xabc not in your allowlist"],
+      ["commit_plan", true, undefined],
+    ]);
+    expect(log[0]!.time).toBe("2026-09-21T14:13:20.000Z");
+  });
+});
