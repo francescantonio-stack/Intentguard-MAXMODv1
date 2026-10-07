@@ -177,7 +177,7 @@ Amounts are decimal strings. They are converted to bigint with token decimals on
 | M3 | Agent: schema, parsers, planner | Demo command + 9 more map to the expected intents (LLM mocked); the planner emits exact amounts and the `PlanExecutor.Plan` | done (`packages/core`: zod schema + JSON Schema, rules parser, LLM-with-fallback wrapper, planner; `pnpm -r test`). Provider adapters (Gemini/Groq) go in the app |
 | M4 | Reference integration (PWA) | Browser: onboarding, real device passkey, command → plan → approval → execute, explorer timeline | code done (`apps/web`; Chromium WebAuthn vector verified in Foundry); todo: one run on a real phone via the Vercel URL |
 | M5 | Full cross-chain flow | One passkey-approved plan: Base burn → attestation → Monad `receiveMessage` → `execute`; negatives rejected | done headless (`scripts/cctp-base-to-monad.mjs --execute`); wired in the PWA (`runPlan`), todo: one real run from the UI |
-| M6 | Hardening | Three consecutive clean runs, readable errors, adequate pool liquidity, `maxFee` cap in the CCTP rule | todo |
+| M6 | Hardening | Three consecutive clean runs, readable errors, adequate pool liquidity, `maxFee` cap in the CCTP rule | `maxFee` cap done in code (≤ 0.5%, needs redeploy); clean runs todo |
 | M7 | Submission | Judge-facing English README framed for Track 04 (done); **video ≤ 3 minutes**; **team created** on the platform; project profile with Track 04 + bounties (Mera "One Passkey, Many Keys", Aurora Intents any-chain liquidity, MetaMask Agent Wallet Plugin); repo made **public at submission** with an **OSI license** (MIT); final gitleaks run | todo |
 
 ## 9. Acceptance tests (must pass before submission)

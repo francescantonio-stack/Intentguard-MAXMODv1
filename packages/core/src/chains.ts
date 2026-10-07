@@ -37,6 +37,9 @@ export const EXECUTOR_LIMITS = {
   maxWeeklyCap: 1_000_000_000n, // 1000 USDC
 } as const;
 
+/** Mirrors MAX_CCTP_FEE_BPS in the NEAR policy: maxFee <= 0.5% of the burned amount. */
+export const MAX_CCTP_FEE_BPS = 50n;
+
 export const DECIMALS = { USDC: 6, MON: 18 } as const;
 export type Token = keyof typeof DECIMALS;
 export type ChainName = typeof MONAD_TESTNET.name | typeof BASE_SEPOLIA.name;

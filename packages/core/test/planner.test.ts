@@ -80,6 +80,7 @@ describe("buildPlan", () => {
     ["over PlanExecutor.maxPlanAmount", "Metti 150 USDC nel vault", {}, "OverPlanLimit"],
     ["swap without pool reserves", "Cambia 1 USDC in MON", { reserves: undefined }, "InvalidPlan"],
     ["bridge smaller than the CCTP fee", "Bridge 0.001 USDC from Base to Monad", { cctpMaxFee: 1_000n }, "InvalidPlan"],
+    ["CCTP fee above the policy's 0.5% ceiling", "Bridge 2 USDC from Base to Monad", { cctpMaxFee: 10_001n }, "InvalidPlan"],
     ["deposit more than was bridged", "Porta 1 USDC da Base su Monad e metti 2 USDC nel vault", {}, "InvalidPlan"],
   ] as const)("rejects: %s", (_name, text, extra, expected) => {
     expect(code(() => plan(text, extra))).toBe(expected);

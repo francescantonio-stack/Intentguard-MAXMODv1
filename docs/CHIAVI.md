@@ -29,7 +29,15 @@ Apri l'URL Vercel → **Setup**. L'app genera la chiave del dispositivo e ti mos
 1. Settings → Rules → Rulesets → New branch ruleset su `main`: «Require status checks» con i 4 job di CI (`ts (core, signer, mcp, web)`, `evm (forge test)`, `near (cargo test)`, `secrets (gitleaks, full history)`) e «Automatically request Copilot code review».
 2. Le etichette `agente:architetto|contratti|auditor|frontend|deploy` si creano da sole al primo uso.
 
-## 5. Agenti AI esterni (MCP): nessuna chiave
+## 5. Aggiornare la policy NEAR (tetto sulla fee CCTP, una volta, dopo il merge)
+
+Sul PC con le credenziali di `intentguard-973f6c.testnet` (lo stato resta, non serve migrazione):
+```bash
+cd contracts/near-policy && cargo near build non-reproducible-wasm
+near contract deploy intentguard-973f6c.testnet use-file target/near/intentguard_policy.wasm without-init-call network-config testnet sign-with-legacy-keychain send
+```
+
+## 6. Agenti AI esterni (MCP): nessuna chiave
 
 ```bash
 claude mcp add intentguard -e NEAR_USER=<tuo>.testnet -e APP_URL=<url vercel> -- npx tsx <percorso repo>/packages/mcp/src/server.ts

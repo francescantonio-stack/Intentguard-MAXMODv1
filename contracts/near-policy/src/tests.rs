@@ -38,9 +38,12 @@ fn word_u(x: u128) -> String { format!("{:064x}", x) }
 fn approve_data(spender: &str, amount: u128) -> String { format!("0x095ea7b3{}{}", word_addr(spender), word_u(amount)) }
 fn transfer_data(to: &str, amount: u128) -> String { format!("0xa9059cbb{}{}", word_addr(to), word_u(amount)) }
 fn burn_data(amount: u128, domain: u32, recipient: &str, token: &str) -> String {
+    burn_data_fee(amount, domain, recipient, token, 500)
+}
+fn burn_data_fee(amount: u128, domain: u32, recipient: &str, token: &str, max_fee: u128) -> String {
     format!(
         "0x8e0250ee{}{}{}{}{}{}{}",
-        word_u(amount), word_u(domain as u128), word_addr(recipient), word_addr(token), word_u(0), word_u(500), word_u(1000)
+        word_u(amount), word_u(domain as u128), word_addr(recipient), word_addr(token), word_u(0), word_u(max_fee), word_u(1000)
     )
 }
 fn execute_data(account: &str, amount_in: u128) -> String {
@@ -265,6 +268,19 @@ fn rejects_cctp_to_other_recipient_domain_or_token() {
     expect_reject(&p, tx(BASE_SEPOLIA, TOKEN_MESSENGER, burn_data(1, 0, DERIVED, USDC_BASE)), "domain");
     expect_reject(&p, tx(BASE_SEPOLIA, TOKEN_MESSENGER, burn_data(1, 15, DERIVED, ATTACKER)), "burn token");
     expect_reject(&p, tx(BASE_SEPOLIA, TOKEN_MESSENGER, burn_data(3_000_000, 15, DERIVED, USDC_BASE)), "exceeds plan budget");
+}
+
+/// A hijacked client must not turn the CCTP relayer fee into a drain: maxFee <= 0.5% of the amount.
+#[test]
+fn cctp_max_fee_is_capped() {
+    let mut p = setup();
+    commit(&mut p, 2_000_000, T0 + 1);
+    let at_cap = 2_000_000 * MAX_CCTP_FEE_BPS / 10_000; // 10_000 units = 0.01 USDC
+    let ok = tx(BASE_SEPOLIA, TOKEN_MESSENGER, burn_data_fee(2_000_000, 15, DERIVED, USDC_BASE, at_cap));
+    assert!(p.dry_run(&user(), PLAN, &ok).is_ok());
+    expect_reject(&p, tx(BASE_SEPOLIA, TOKEN_MESSENGER, burn_data_fee(2_000_000, 15, DERIVED, USDC_BASE, at_cap + 1)), "maxFee");
+    expect_reject(&p, tx(BASE_SEPOLIA, TOKEN_MESSENGER, burn_data_fee(2_000_000, 15, DERIVED, USDC_BASE, 2_000_000)), "maxFee");
+    expect_reject(&p, tx(BASE_SEPOLIA, TOKEN_MESSENGER, burn_data_fee(2_000_000, 15, DERIVED, USDC_BASE, u128::MAX)), "maxFee");
 }
 
 #[test]

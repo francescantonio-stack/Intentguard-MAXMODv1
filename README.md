@@ -164,7 +164,7 @@ Every hash is in [`deployments/`](deployments/).
 
 Known limits:
 - The passkey is verified on Monad, not on NEAR, so NEAR's guarantee is "bounded to the user's own addresses and caps".
-- `CctpDepositForBurn` does not cap CCTP `maxFee` yet.
+- `CctpDepositForBurn` caps CCTP `maxFee` at 0.5% of the amount (in this repo; the deployed testnet policy needs the upgrade in `docs/CHIAVI.md` §5).
 - The policy owner curates the allowlist.
 - MiniSwap and DemoVault are demo contracts.
 - The passkey used in the headless runs is a software test key. The PWA uses a real device passkey.

@@ -34,6 +34,10 @@ pub const MONAD_TESTNET: u64 = 10143;
 /// Pseudo-selector used as rule key for native transfers (empty calldata).
 const SEL_NATIVE: [u8; 4] = [0, 0, 0, 0];
 pub const BASE_SEPOLIA: u64 = 84532;
+/// Ceiling for the CCTP fast-transfer fee (`maxFee`) relative to the burned amount: 50 bps = 0.5%.
+/// Circle's testnet fast fee is ~1-2 bps; without a ceiling a hijacked client could burn the user's USDC
+/// as relayer fee. A constant (not a rule field) so the upgrade needs no state migration.
+pub const MAX_CCTP_FEE_BPS: u128 = 50;
 
 #[derive(BorshStorageKey)]
 #[near]
@@ -542,6 +546,13 @@ impl Policy {
                 }
                 if amount > budget {
                     return Err(format!("CCTP amount {} exceeds plan budget {}", amount, budget));
+                }
+                let max_fee = word_u128(&data, 5).ok_or_else(|| bad("maxFee"))?;
+                if max_fee.saturating_mul(10_000) > amount.saturating_mul(MAX_CCTP_FEE_BPS) {
+                    return Err(format!(
+                        "CCTP maxFee {} above {} bps of amount {}",
+                        max_fee, MAX_CCTP_FEE_BPS, amount
+                    ));
                 }
             }
             RuleKind::CctpReceiveMessage => {}

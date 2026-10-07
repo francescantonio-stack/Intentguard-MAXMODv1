@@ -2,7 +2,7 @@ import { encodeAbiParameters, encodeFunctionData, getAddress, isAddress, keccak2
 import { cctpAbi, erc20Abi } from "./abi";
 import { toUnits } from "./amounts";
 import { fractionToBps } from "./amounts";
-import { BASE_SEPOLIA, CCTP, EXECUTOR_LIMITS, MONAD_TESTNET, type ChainName } from "./chains";
+import { BASE_SEPOLIA, CCTP, EXECUTOR_LIMITS, MAX_CCTP_FEE_BPS, MONAD_TESTNET, type ChainName } from "./chains";
 import { miniSwapAmountOut, planHash, type ExecutorPlan } from "./planHash";
 import type { Intent } from "./schema";
 
@@ -99,6 +99,9 @@ export function buildPlan(intent: Intent, ctx: PlanContext): Plan {
       case "bridge": {
         const amount = toUnits(a.amount, "USDC");
         if (amount <= maxFee) throw new PolicyError("InvalidPlan", "bridge amount does not cover the CCTP fee");
+        if (maxFee * 10_000n > amount * MAX_CCTP_FEE_BPS) {
+          throw new PolicyError("InvalidPlan", `CCTP fee ${maxFee} above ${MAX_CCTP_FEE_BPS} bps of ${amount}`);
+        }
         budget += amount;
         steps.push(
           step("base-sepolia", "approve", BASE_SEPOLIA.usdc, `Approve ${a.amount} USDC to CCTP`,
