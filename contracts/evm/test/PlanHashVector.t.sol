@@ -25,6 +25,9 @@ contract PlanHashVectorTest is Test {
             nonce: 7,
             deadline: 1_800_000_000
         });
-        assertEq(PlanExecutor(payable(MONAD_PLAN_EXECUTOR)).planHash(p), bytes32(0x5e684f0da345231ea31b267600824e68a2b06e4a489ec4a574643e7ab4c65147));
+        assertEq(
+            PlanExecutor(payable(MONAD_PLAN_EXECUTOR)).planHash(p),
+            bytes32(0x5e684f0da345231ea31b267600824e68a2b06e4a489ec4a574643e7ab4c65147)
+        );
     }
 }
