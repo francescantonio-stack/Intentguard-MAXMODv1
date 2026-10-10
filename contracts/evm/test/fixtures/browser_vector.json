@@ -1,0 +1,11 @@
+{
+ "challenge": "0x555edf832f878c1e794819c2af9e99514b3ef992fca3c60bbd0ae48fc95b0a08",
+ "authenticatorData": "0x9276d4ce400f7d8739c097268876274e09c9b7d1beb56f7d3fa9d34a62e2fb5a1d00000000",
+ "clientDataJSON": "{\"type\":\"webauthn.get\",\"challenge\":\"VV7fgy-HjB55SBnCr56ZUUs--ZL8o8YLvQrkj8lbCgg\",\"origin\":\"https://raw.githack.com\",\"crossOrigin\":false}",
+ "challengeIndex": 23,
+ "typeIndex": 1,
+ "r": "0xca9694aabf727449f6f845c98050c0a6d4423a2b7297d34faa61e0a5472b6deb",
+ "s": "0x02159e70c0f764b680091f176f952bdf4bf367f527697613e6f68ebcede6b833",
+ "x": "0x8e44c75df5abf7d2c86c4e6b9c3f2b929eba5ad6b9679e74ca00099c4d0bb8cf",
+ "y": "0x911df9471e2ba7bac04200de5d84bcbf724b9785e28e3f21ef7fc82e8efed678"
+}

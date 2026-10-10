@@ -51,8 +51,8 @@ contract WebAuthnVectorsTest is Test {
         assertFalse(WebAuthn.verify(challenge, true, a, x, y));
     }
 
-    /// TODO(Max): replace test/fixtures/browser_vector.json with a vector produced by a REAL browser passkey
-    ///            (see tools/make-vector.html). Until then this test is skipped.
+    /// Assertion produced by a REAL phone passkey (platform authenticator, user verification on) through
+    /// tools/make-vector.html served at https://raw.githack.com. Skipped only if the fixture is missing.
     function test_browserVector_ifPresent() public {
         string memory path = string.concat(vm.projectRoot(), "/test/fixtures/browser_vector.json");
         if (!vm.exists(path)) {
@@ -61,11 +61,10 @@ contract WebAuthnVectorsTest is Test {
         }
         string memory j = vm.readFile(path);
         WebAuthn.WebAuthnAuth memory a = _auth(j);
-        assertTrue(
-            WebAuthn.verify(
-                vm.parseJsonBytes(j, ".challenge"), true, a, vm.parseJsonBytes32(j, ".x"), vm.parseJsonBytes32(j, ".y")
-            )
-        );
+        bytes32 x = vm.parseJsonBytes32(j, ".x");
+        bytes32 y = vm.parseJsonBytes32(j, ".y");
+        assertTrue(WebAuthn.verify(vm.parseJsonBytes(j, ".challenge"), true, a, x, y));
+        assertFalse(WebAuthn.verify(abi.encodePacked(keccak256("another plan")), true, a, x, y));
     }
 
     /// Assertion produced by Chromium's WebAuthn stack (CDP virtual authenticator, user verification on) through

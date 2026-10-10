@@ -35,7 +35,7 @@ Alzare il tetto o aggiungere destinatari richiede **1 yoctoNEAR**: lo può fare 
 
 | Suite | Risultato |
 |---|---|
-| `forge test` (unit + fuzz da 512 run + 5 invarianti + vettori indipendenti, incluso quello Chromium) | **43 passati, 0 falliti**, 2 saltati (fork disattivato di default; vettore "browser" in attesa del tuo file) |
+| `forge test` (unit + fuzz da 512 run + 5 invarianti + vettori indipendenti, inclusi quello Chromium e quello di una passkey vera su telefono) | **44 passati, 0 falliti**, 1 saltato (fork disattivato di default). Il vettore "browser" viene da una passkey vera su telefono |
 | `forge test --match-contract MonadGas -vv` (gas di `WebAuthn.verify` con il precompile P256 di Monad) | **10.450 gas** |
 | `FORK=1 forge test --match-contract MonadFork` (fork locale di Monad testnet con USDC Circle e WMON reali) | **2 passati, 0 falliti** (ultima esecuzione 3/10/2026: serve l'RPC di Monad) |
 | `pnpm -r test` (pacchetti TypeScript core, signer, MCP) | **58 passati, 0 falliti**, 1 saltato (controllo live di `planHash`, si attiva con `LIVE=1`) |

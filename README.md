@@ -203,7 +203,7 @@ cd contracts/near-policy && cargo test --lib
 
 | Suite | Result |
 |---|---|
-| Foundry: unit, fuzz, 5 invariants over 8,192 random calls, WebAuthn vectors (incl. one produced by Chromium through the app's code) | **43 passed**, 2 skipped |
+| Foundry: unit, fuzz, 5 invariants over 8,192 random calls, WebAuthn vectors (incl. a real phone passkey and one produced by Chromium through the app's code) | **44 passed**, 1 skipped |
 | `WebAuthn.verify` gas with the Monad P256 precompile | **10,450** |
 | Monad testnet fork (`FORK=1`) † | 2 passed |
 | TypeScript: core, signer, MCP | **58 passed**, 1 skipped |
@@ -212,7 +212,8 @@ cd contracts/near-policy && cargo test --lib
 | Live P256 / WebAuthn probes on Monad and Base Sepolia † | passed |
 
 What is skipped by default, and why:
-- **Foundry, 2 skipped.** The Monad fork suite runs only with `FORK=1`. The real-browser WebAuthn vector runs only once `test/fixtures/browser_vector.json` exists; the Chromium vector already passes.
+- **Foundry, 1 skipped.** The Monad fork suite runs only with `FORK=1`.
+- The real-device WebAuthn vector (`test/fixtures/browser_vector.json`) comes from a phone passkey with user verification, generated with [`make-vector.html`](contracts/evm/tools/make-vector.html). The same Solady `WebAuthn.verify` used by `PlanExecutor` accepts it and rejects it for any other challenge.
 - **TypeScript, 1 skipped.** The live `planHash` check runs only with `LIVE=1`, because it reads from Monad testnet.
 
 ## What IntentGuard provides
@@ -297,7 +298,7 @@ Known limits:
 - `CctpDepositForBurn` caps the CCTP `maxFee` at 0.5% of the amount in this repo; the deployed testnet policy needs the upgrade described in `docs/CHIAVI.md` §5.
 - The policy owner curates the allowlist.
 - MiniSwap and DemoVault are demo contracts.
-- The passkey in the headless runs is a software test key. The PWA uses a real device passkey.
+- The passkey in the headless testnet runs is a software test key. The PWA uses a real device passkey, and a real phone passkey assertion is verified in the Foundry tests.
 
 ## Track 04 fit and bounties
 
