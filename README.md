@@ -1,14 +1,20 @@
-# IntentGuard: passkey-signed spending policies for AI agents
+# IntentGuard: safe AI agents on Monad, approved with a passkey
 
-**A trust layer that any AI agent, wallet or dApp can build on.** The agent proposes; the user's passkey signs a policy and a plan. Two independent layers enforce it: NEAR (policy contract plus Chain Signatures MPC) and Monad (`PlanExecutor`, which verifies the passkey on-chain through the P256 precompile). Funds can move only within that policy.
+**IntentGuard brings safe AI agents to Monad with on-chain P256 passkey verification.**
+An AI agent proposes a plan. The user approves it once with a device passkey (WebAuthn). On Monad, `PlanExecutor` verifies that passkey signature on-chain through Monad's **P256 precompile (`0x0100`)** and moves funds only within the approved plan, its nonce, its deadline and the user's weekly cap. Nothing else gets executed.
 
-> ⚠️ **Testnet only.** NEAR testnet, Monad testnet (chain 10143) and Base Sepolia. No real funds; the code is not audited. Built for **Monad Metropolis, Track 04: Trust, Identity & AI Infrastructure**.
+> ⚠️ **Testnet only.** Monad testnet (chain 10143), plus NEAR testnet and Base Sepolia as supporting layers. No real funds; the code is not audited. Built for **Monad Metropolis, Track 04: Trust, Identity & AI Infrastructure**.
 
-| | |
+| On Monad testnet (chain 10143) | |
 |---|---|
-| Monad contracts | `PlanExecutor` [`0x3f13…faC1`](https://testnet.monadexplorer.com/address/0x3f1391EC12002E10E18Efa82Af5E491f8159faC1), `MiniSwap` [`0x3D06…70f8`](https://testnet.monadexplorer.com/address/0x3D06B01a6B164322013547BEB4Fe0AfF985870f8), `DemoVault` [`0x66C2…8914`](https://testnet.monadexplorer.com/address/0x66C210D79d24a09FCa1F8Aae8c3a98A58F578914), all source-verified on Sourcify |
-| NEAR policy contract | [`intentguard-973f6c.testnet`](https://testnet.nearblocks.io/address/intentguard-973f6c.testnet) → MPC `v1.signer-prod.testnet` |
-| Real end-to-end run | Base Sepolia burn → Circle CCTP V2 → Monad mint → passkey-verified swap + vault deposit. Every tx is signed by MPC through the policy. [Links below](#monad-integration) |
+| **`PlanExecutor`** (passkey check + execution) | [`0x3f1391EC12002E10E18Efa82Af5E491f8159faC1`](https://testnet.monadexplorer.com/address/0x3f1391EC12002E10E18Efa82Af5E491f8159faC1) |
+| `MiniSwap` (demo USDC/WMON pool) | [`0x3D06B01a6B164322013547BEB4Fe0AfF985870f8`](https://testnet.monadexplorer.com/address/0x3D06B01a6B164322013547BEB4Fe0AfF985870f8) |
+| `DemoVault` (demo ERC-4626 vault) | [`0x66C210D79d24a09FCa1F8Aae8c3a98A58F578914`](https://testnet.monadexplorer.com/address/0x66C210D79d24a09FCa1F8Aae8c3a98A58F578914) |
+| Source verification | all 3 contracts, Sourcify `exact_match` |
+| Passkey check cost | **10,450 gas** per `WebAuthn.verify` with the P256 precompile ([`MonadGas.t.sol`](contracts/evm/test/MonadGas.t.sol)) |
+| Passkey-verified execution | [`0x4c0501ea…`](https://testnet.monadexplorer.com/tx/0x4c0501ea37f917411543aab82536235a5a7fb6c2ecbba4339499a5919852585d): half swapped to native MON, half deposited into the vault |
+
+**Contents:** [Why Monad](#why-monad) · [Architecture](#architecture) · [Deployed on Monad testnet](#deployed-on-monad-testnet) · [Run the tests locally](#run-the-tests-locally) · [Attacks blocked](#attacks-blocked-on-chain) · [Integration guide](#integration-guide-for-third-party-agents-and-wallets) · [Security model](#security-model)
 
 ---
 
@@ -16,34 +22,77 @@
 
 AI agents are starting to move money, but the trust model is still all or nothing:
 - **Hot keys or custodial "agent wallets"**: the agent, or whoever compromises it, can drain everything.
-- **Per-transaction pop-ups**: safe but unusable. The user approves opaque calldata they cannot read, one tx at a time, chain by chain.
+- **A pop-up for every transaction**: safe but unusable. The user approves opaque calldata one tx at a time.
 - **Off-chain policy engines**: the rules live on a server that you have to trust.
 
-What is missing is a **primitive**. The user approves *what* may happen once, with a passkey: the plan, the limits and the recipients. Then the chains, not the agent's server, refuse anything else.
+What is missing is a **primitive**. The user approves *what* may happen once, with a passkey: the plan, the limits and the recipients. Then the chain, not the agent's server, refuses everything else.
 
-## What IntentGuard provides
+## Why Monad
 
-1. **One passkey, many keys.** A NEAR account plus a device passkey. With NEAR Chain Signatures, the policy contract derives one secp256k1 EVM address per user (path `"<user>,evm,1"`). The same address works on Monad and Base Sepolia. There is no seed phrase and no private key on the agent side.
-2. **Policy before signature (NEAR).** The MPC network signs only what the policy contract forwards. The policy contract checks every EIP-1559 tx against:
-   - an allowlist of chain, contract, selector and argument rules;
-   - the user's own recipient addresses;
-   - a rolling 7-day USDC cap;
-   - a committed plan with a budget, a signature count and a TTL;
-   - gas and fee ceilings.
+Monad is where the user's approval is enforced. Monad is not one step among many: `PlanExecutor` is the last line of defense, and it holds even if the agent and every other layer are compromised.
 
-   Loosening the policy (raising the cap, adding a recipient) requires a 1-yoctoNEAR deposit, which only the user's full-access key or wallet can attach. An agent holding a function-call key cannot do it.
-3. **Passkey at execution (Monad).** `PlanExecutor` executes a plan only with a valid WebAuthn assertion over `planHash(plan)`. The hash is bound to the chain id and the contract. The check uses Solady `WebAuthn` → Monad's P256 precompile `0x0100`. It also enforces a nonce, a deadline, a per-plan ceiling and an on-chain weekly cap, and runs the swap and the vault deposit atomically.
+- **Passkeys verified on-chain, every time.** WebAuthn passkeys sign with P-256 (secp256r1), not with Ethereum's secp256k1. Monad exposes a **P256 precompile at `0x0100` (EIP-7951)**. `PlanExecutor` uses Solady `WebAuthn` on top of it. A full `WebAuthn.verify` costs **10,450 gas**: [`MonadGas.t.sol`](contracts/evm/test/MonadGas.t.sol) measures it and asserts it stays under 50k. A pure-Solidity P-256 verifier costs hundreds of thousands of gas. With the precompile, IntentGuard checks the human's passkey on **every** plan, not once per session.
+- **The passkey is the account's authority on Monad.** `registerPasskey` binds a passkey and a weekly cap to an account. Rotating the passkey (`rotatePasskey`) and changing the cap (`setWeeklyCap`) both require a valid signature from the current passkey. `execute` runs only with a valid assertion over `planHash(plan)`.
+- **Replay-proof plans.** `planHash` is a domain-separated hash (`0x1901 ‖ chainid ‖ contract ‖ structHash`) bound to the chain id and to the `PlanExecutor` address. On top of that, Monad enforces a per-account nonce, `executed[hash]`, a deadline, a per-plan ceiling (`maxPlanAmount`, 100 USDC on the deployed contract) and a rolling 7-day cap. The swap and the vault deposit run atomically.
+- **Built for Monad's execution model.** Foundry runs with `network = "monad"` (Monad gas semantics and precompiles, Foundry ≥ 1.8), so the tests exercise the real precompile. Monad charges the gas **limit**, not the gas used. So every tx sets its limit from an estimate plus a margin (×1.1 in `packages/signer`, ×1.25 in the reference scripts), and the policy rejects a gas limit above 2M or a fee above 1000 gwei. Each address sends one tx at a time.
+- **Proven live, not only in tests.** A live probe ([`webauthn_live_probe.sh`](scripts/live-checks/webauthn_live_probe.sh)) against Monad testnet confirms the precompile accepts a valid assertion and rejects a tampered one. The deployed `PlanExecutor` has executed real passkey-approved plans ([links below](#deployed-on-monad-testnet)).
 
-The wallet PWA is the **reference integration**: chat → plan → passkey → execute. A static UI prototype is in [`app-demo/`](app-demo/intentguard.html), and [`scripts/`](scripts/) contains a headless reference client used for every real tx below. Any other agent framework or wallet integrates through the same contract calls.
+**Supporting layers, for interoperability and settlement:**
+- **NEAR** adds a second, independent check *before* a signature exists. A policy contract plus Chain Signatures MPC give each user one EVM address on Monad, with no seed phrase and no private key on the agent side.
+- **Circle CCTP V2** brings real (testnet) USDC from Base Sepolia into Monad.
 
-## How it works
+Both serve the execution on Monad.
+
+## Architecture
+
+```mermaid
+flowchart LR
+    U(["👤 User<br/>device passkey"])
+    A["🤖 AI agent / wallet<br/>(MCP server · PWA · SDK)<br/>proposes, holds no keys"]
+
+    subgraph MONAD["⚡ MONAD TESTNET · chain 10143 · enforcement + execution"]
+        direction TB
+        PE["<b>PlanExecutor</b><br/>WebAuthn.verify over planHash<br/>via P256 precompile 0x0100 (10,450 gas)<br/>nonce · deadline · plan ceiling · weekly cap"]
+        SW["MiniSwap<br/>USDC → MON"]
+        VA["DemoVault<br/>ERC-4626 shares"]
+        PE --> SW
+        PE --> VA
+    end
+
+    subgraph SUPPORT["Supporting layers: interoperability + settlement"]
+        direction TB
+        NP["NEAR policy contract<br/>allowlist · own recipients<br/>weekly cap · plan budget · TTL"]
+        MPC["NEAR Chain Signatures MPC<br/>one EVM address per user"]
+        CCTP["Circle CCTP V2<br/>Base Sepolia → Monad USDC"]
+        NP --> MPC
+    end
+
+    A -->|"1 · plan + planHash"| U
+    U -->|"2 · passkey signature over planHash (once)"| A
+    A -->|"3 · commit_plan + request_signature"| NP
+    MPC -->|"4 · signed EVM txs (only what the policy allows)"| A
+    CCTP -.->|"USDC minted on Monad to the user's address"| PE
+    A ==>|"5 · execute(plan, passkey signature)"| PE
+    PE ==>|"MON + vault shares, to the user's address only"| U
+
+    style MONAD fill:#ede9fe,stroke:#6e54ff,stroke-width:3px,color:#1e1b4b
+    style PE fill:#6e54ff,stroke:#4c1d95,color:#ffffff
+    style SUPPORT fill:#f8fafc,stroke:#94a3b8,stroke-dasharray:4 4,color:#334155
+```
+
+**Two independent layers of defense:**
+- **Layer B, Monad (at execution).** `PlanExecutor` executes only with a valid passkey signature over that exact plan. If the NEAR layer were bypassed, Monad still refuses to move funds.
+- **Layer A, NEAR (before signing).** The MPC network signs only what the policy contract forwards: allowlisted calls, to the user's own addresses, within the plan budget and the weekly cap. If the agent is compromised, this still holds.
+
+<details>
+<summary>Full sequence of one plan (step by step)</summary>
 
 ```mermaid
 sequenceDiagram
     autonumber
     actor U as User (passkey)
-    participant A as AI agent / wallet (3rd party)
-    participant P as NEAR policy contract<br/>intentguard-973f6c.testnet
+    participant A as AI agent / wallet
+    participant P as NEAR policy<br/>intentguard-973f6c.testnet
     participant M as NEAR MPC<br/>v1.signer-prod.testnet
     participant B as Base Sepolia<br/>Circle CCTP V2
     participant X as Monad testnet<br/>PlanExecutor (P256 0x0100)
@@ -64,24 +113,137 @@ sequenceDiagram
     X-->>U: MON received + vault shares (to the derived address only)
 ```
 
-**Defense in depth:**
-- If the agent is compromised, it can still request only allowlisted calls, to the user's own addresses, within the plan budget and the weekly cap.
-- If the NEAR layer were bypassed, `PlanExecutor` still refuses to move funds without the passkey signature over that exact plan.
+</details>
+
+## Deployed on Monad testnet
+
+Chain id **10143**. Deployed on 3 Oct 2026 with [`Deploy.s.sol`](contracts/evm/script/Deploy.s.sol). Every address and tx hash is also in [`deployments/monad-testnet.json`](deployments/monad-testnet.json).
+
+| Contract | Address | Deploy tx |
+|---|---|---|
+| **PlanExecutor** | [`0x3f1391EC12002E10E18Efa82Af5E491f8159faC1`](https://testnet.monadexplorer.com/address/0x3f1391EC12002E10E18Efa82Af5E491f8159faC1) | [0x56a46ee3…](https://testnet.monadexplorer.com/tx/0x56a46ee3abae5f16c03fca508e24f0190a6872b7b09417287c27ffd1870fb313) |
+| MiniSwap (USDC/WMON, x·y=k) | [`0x3D06B01a6B164322013547BEB4Fe0AfF985870f8`](https://testnet.monadexplorer.com/address/0x3D06B01a6B164322013547BEB4Fe0AfF985870f8) | [0x2cd37e3e…](https://testnet.monadexplorer.com/tx/0x2cd37e3ef021fed2093227d25f4c4c92b8201d353173fb70fe5866f9b89555e7) |
+| DemoVault (mock ERC-4626) | [`0x66C210D79d24a09FCa1F8Aae8c3a98A58F578914`](https://testnet.monadexplorer.com/address/0x66C210D79d24a09FCa1F8Aae8c3a98A58F578914) | [0x197892b7…](https://testnet.monadexplorer.com/tx/0x197892b79efaa76d6824745a633923aabd9eb60d76b71cef868d7c63235202fd) |
+
+The three contracts are source-verified on Sourcify (`exact_match`). External testnet contracts they use: Circle USDC [`0x534b2f3A21130d7a60830c2Df862319e593943A3`](https://testnet.monadexplorer.com/address/0x534b2f3A21130d7a60830c2Df862319e593943A3) and WMON [`0xFb8bf4c1CC7a94c73D209a149eA2AbEa852BC541`](https://testnet.monadexplorer.com/address/0xFb8bf4c1CC7a94c73D209a149eA2AbEa852BC541). The demo user's address on Monad is [`0xd2FE6a3Ae252D6fb2f604805898177c8FdaAa24B`](https://testnet.monadexplorer.com/address/0xd2FE6a3Ae252D6fb2f604805898177c8FdaAa24B), derived by NEAR Chain Signatures (the same address on Base Sepolia).
+
+**Key transactions on Monad:**
+
+| What | Tx | Gas used |
+|---|---|---|
+| `registerPasskey`: passkey + weekly cap bound to the account | [0xd0664407…](https://testnet.monadexplorer.com/tx/0xd0664407272683196866a2b455ca42cca374082853b10cbdd92d23b0ce8db3c8) | 145,942 |
+| First passkey-verified `execute`: swap 0.2 USDC → MON + deposit 0.4 USDC | [0x970c7022…](https://testnet.monadexplorer.com/tx/0x970c7022d4a7846cac0f515bf3a8dda2e2a209f5fb988d760f08e301aa47628f) | 689,311 |
+| Full-demo `execute`: 1.999479 USDC, half swapped to native MON, half into the vault | [0x4c0501ea…](https://testnet.monadexplorer.com/tx/0x4c0501ea37f917411543aab82536235a5a7fb6c2ecbba4339499a5919852585d) | 582,218 |
+| CCTP `receiveMessage`: 1.99974 USDC minted on Monad | [0x57986db9…](https://testnet.monadexplorer.com/tx/0x57986db9ce312e0d50b418d84d3add2fd4903911299e1a57adc9b9928679feaa) | 408,796 |
+| First MPC-signed broadcast on Monad (signed through the NEAR policy) | [0x9beb0227…](https://testnet.monadexplorer.com/tx/0x9beb0227b8d8578a47ca5853ee4831cc907c5714533bf47fcc76f1809b785d4a) | 21,000 |
+
+### The full demo in one run
+
+`node scripts/cctp-base-to-monad.mjs --amount 2 --execute` took **135 s** end to end. One passkey-approved plan covers 5 signatures. Each one is MPC-signed through the NEAR policy:
+
+| # | Step | Tx |
+|---|---|---|
+| 1 | Base Sepolia: USDC approve → TokenMessengerV2 | [0x451d02b9…](https://sepolia.basescan.org/tx/0x451d02b978e82dd3c13bcfc87e351bb22380d1757977916e201621e5f6a4b23f) |
+| 2 | Base Sepolia: `depositForBurn` 2 USDC, fast transfer | [0x8b1c6040…](https://sepolia.basescan.org/tx/0x8b1c6040af0300d49d5cc854ac5adc1c54e9877d6768c9aabd06fd7b48e68eda) |
+| 3 | **Monad**: `receiveMessage`, 1.99974 USDC minted (Circle attestation after 28 s) | [0x57986db9…](https://testnet.monadexplorer.com/tx/0x57986db9ce312e0d50b418d84d3add2fd4903911299e1a57adc9b9928679feaa) |
+| 4 | **Monad**: USDC approve → PlanExecutor | [0xc2fa45e8…](https://testnet.monadexplorer.com/tx/0xc2fa45e863b0005074144d884daacaee61090e3d2c910feddb1556f7d5002e8b) |
+| 5 | **Monad**: `PlanExecutor.execute`, passkey verified on-chain; half swapped to native MON, half into the vault | [0x4c0501ea…](https://testnet.monadexplorer.com/tx/0x4c0501ea37f917411543aab82536235a5a7fb6c2ecbba4339499a5919852585d) |
+
+Other runs: a standalone CCTP leg in 67 s ([burn](https://sepolia.basescan.org/tx/0x5c9a64352d4b2ebed79d91f860c57b74db773860cae637d10b78156ee6fe22eb) → [mint](https://testnet.monadexplorer.com/tx/0x749fe4500c991156573080bd89ad4db06358489a1d7ee4fac6e023abf6e179a6)). Every hash is in [`deployments/`](deployments/).
+
+## Attacks blocked on-chain
+
+Three out-of-policy attempts, three refusals:
+
+| Attempt | Where it stops | Result |
+|---|---|---|
+| A 6 USDC plan **with a valid passkey signature**, above the weekly cap | **Monad, `PlanExecutor`** | reverts with `OverWeeklyCap(6000000, 4400000)`, simulated with `eth_call` against the deployed contract |
+| A plan over the weekly cap | NEAR, `commit_plan` | «weekly cap exceeded» |
+| «Send 50 USDC to 0xabc» | NEAR, `request_signature` | «recipient not in your allowlist» |
+
+The first case is the important one: even a genuine passkey signature cannot push spending past the limits enforced on Monad. The PWA's attack demo replays these refusals live (see [Reference app](#reference-app-pwa)).
+
+## Run the tests locally
+
+**Requirements:**
+- **Foundry ≥ 1.8.** `foundry.toml` sets `network = "monad"`, which needs it.
+- Node 20+ with pnpm.
+- Rust stable with the `wasm32-unknown-unknown` target, and `cargo-near` 0.22 (only for the NEAR sandbox).
+- Python 3 with `cryptography` (only for the live checks).
+
+```bash
+git clone --recurse-submodules https://github.com/francescantonio-stack/Intentguard-MAXMODv1
+cd Intentguard-MAXMODv1
+```
+
+**1. Foundry (Solidity, Monad):**
+```bash
+cd contracts/evm
+forge test                                       # unit, fuzz, invariants, WebAuthn vectors
+forge test --match-contract MonadGas -vv         # prints the WebAuthn.verify gas with the P256 precompile
+FORK=1 forge test --match-contract MonadFork -vv # local fork of Monad testnet (real USDC/WMON, nothing broadcast)
+```
+
+**2. TypeScript (core, signer, MCP):**
+```bash
+pnpm install
+pnpm -r test                                         # all packages
+LIVE=1 pnpm --filter @intentguard/core test          # also checks planHash against the deployed PlanExecutor
+pnpm --filter @intentguard/web dev                   # the PWA on http://localhost:3000
+```
+
+**3. NEAR policy (Rust):**
+```bash
+cd contracts/near-policy && cargo test --lib
+```
+
+**Everything at once:** `./run-all-checks.sh` runs the Foundry tests, the Monad fork test, the NEAR unit and sandbox tests, and the read-only live checks. It needs no keys, no funds, and sends no transactions.
+
+**Results on a fresh clone** (re-run on 10 Oct 2026; rows marked † need network access to Monad/NEAR and are from the last run on 3 Oct 2026):
+
+| Suite | Result |
+|---|---|
+| Foundry: unit, fuzz, 5 invariants over 8,192 random calls, WebAuthn vectors (incl. one produced by Chromium through the app's code) | **43 passed**, 2 skipped |
+| `WebAuthn.verify` gas with the Monad P256 precompile | **10,450** |
+| Monad testnet fork (`FORK=1`) † | 2 passed |
+| TypeScript: core, signer, MCP | **58 passed**, 1 skipped |
+| NEAR policy unit tests | **27 passed** |
+| NEAR sandbox (policy → mock MPC → callback) † | passed |
+| Live P256 / WebAuthn probes on Monad and Base Sepolia † | passed |
+
+What is skipped by default, and why:
+- **Foundry, 2 skipped.** The Monad fork suite runs only with `FORK=1`. The real-browser WebAuthn vector runs only once `test/fixtures/browser_vector.json` exists; the Chromium vector already passes.
+- **TypeScript, 1 skipped.** The live `planHash` check runs only with `LIVE=1`, because it reads from Monad testnet.
+
+## What IntentGuard provides
+
+1. **Passkey execution on Monad.** `PlanExecutor` executes a plan only with a valid WebAuthn assertion over `planHash(plan)`. It checks the assertion with Solady `WebAuthn` → P256 precompile `0x0100`, enforces nonce, deadline, per-plan ceiling and weekly cap, and runs the swap and the vault deposit atomically. Outputs always go to `plan.account`.
+2. **One passkey, one address, no seed phrase.** A NEAR account plus a device passkey. With NEAR Chain Signatures, the policy contract derives one secp256k1 EVM address per user (path `"<user>,evm,1"`). That address acts on Monad, and the same address works on Base Sepolia. There is no private key on the agent side.
+3. **Policy before signature (NEAR).** The MPC network signs only what the policy contract forwards. The policy checks every EIP-1559 tx against:
+   - an allowlist of chain, contract, selector and argument rules;
+   - the user's own recipient addresses;
+   - a rolling 7-day USDC cap;
+   - a committed plan with a budget, a signature count and a TTL;
+   - gas and fee ceilings.
+
+   Loosening the policy (raising the cap, adding a recipient) requires a 1 yoctoNEAR deposit, which only the user's full-access key or wallet can attach. An agent holding a function-call key cannot do it.
+
+The wallet PWA is the **reference integration**: chat → plan → passkey → execution on Monad. A static UI prototype is in [`app-demo/`](app-demo/intentguard.html), and [`scripts/`](scripts/) contains the headless reference client used for every real tx above. Any other agent framework or wallet integrates through the same contract calls.
 
 ## Integration guide (for third-party agents and wallets)
 
-An app needs no IntentGuard SDK. It makes five calls. The TypeScript reference implementation is [`packages/signer`](packages/signer) (`PolicyClient`, `signAndSend`, `runPlan`) on top of [`packages/core`](packages/core) (intent schema, deterministic planner, `planHash`, WebAuthn struct); the original Node scripts are in [`scripts/`](scripts).
+An app needs no IntentGuard SDK. It makes five calls. The TypeScript reference implementation is [`packages/signer`](packages/signer) (`PolicyClient`, `signAndSend`, `runPlan`) on top of [`packages/core`](packages/core) (intent schema, deterministic planner, `planHash`, WebAuthn struct). The original Node scripts are in [`scripts/`](scripts).
 
-1. **Onboard (user's wallet or full-access key, once).**
-   - `set_weekly_cap(weekly_cap)` and `add_recipient(<derived EVM address>)` on the policy contract, each with a 1 yocto deposit.
-   - `PlanExecutor.registerPasskey(x, y, weeklyCap)` from the derived address, signed via the policy like any other tx.
+1. **Onboard (once, from the user's wallet or full-access key).**
+   - `set_weekly_cap(weekly_cap)` and `add_recipient(<derived EVM address>)` on the NEAR policy contract, each with a 1 yocto deposit.
+   - `PlanExecutor.registerPasskey(x, y, weeklyCap)` on Monad, from the derived address, signed through the policy like any other tx.
    - Then give the agent a **function-call access key** restricted to the policy contract. It cannot attach deposits, so it can never loosen the policy.
-2. **Build a plan.** Turn the user's intent into concrete EIP-1559 txs plus a `PlanExecutor.Plan`: `{account, amountIn, swapAmount, minAmountOut, unwrap, nonce, deadline}`. Compute `planHash = PlanExecutor.planHash(plan)`. Use the free view `check(user, plan_hash, tx)` to dry-run every tx and show the user readable rejections.
+2. **Build a plan.** Turn the user's intent into concrete EIP-1559 txs plus a `PlanExecutor.Plan`: `{account, amountIn, swapAmount, minAmountOut, unwrap, nonce, deadline}`. Compute `planHash = PlanExecutor.planHash(plan)`. Use the free view `check(user, plan_hash, tx)` on NEAR to dry-run every tx and show the user readable rejections.
 3. **Passkey approval.** `navigator.credentials.get({ challenge: planHash })`. Keep `authenticatorData`, `clientDataJSON`, `r` and `s` (low-S).
-4. **Commit + sign.** `commit_plan(planHash, budget, ttl_seconds ≤ 3600, max_signatures ≤ 16)`, then `request_signature(planHash, tx)` for each tx. Attach 100 Tgas: about 13.5 Tgas are actually burned. The call returns `{big_r, s, recovery_id}`. Assemble the signed tx and broadcast it from the derived address.
-5. **Execute on Monad.** `PlanExecutor.execute(plan, webauthnAuth)`. Outputs always go to `plan.account`. Anyone may relay it.
+4. **Commit + sign.** `commit_plan(planHash, budget, ttl_seconds ≤ 3600, max_signatures ≤ 16)`, then `request_signature(planHash, tx)` for each tx. Attach 100 Tgas; about 13.5 Tgas are actually burned. The call returns `{big_r, s, recovery_id}`. Assemble the signed tx and broadcast it from the derived address.
+5. **Execute on Monad.** `PlanExecutor.execute(plan, webauthnAuth)`. Outputs always go to `plan.account`, so anyone may relay it.
 
-Allowlisted rule kinds today:
+Rule kinds on the allowlist today:
 - `UsdcApprove{spender}`;
 - `UsdcTransfer` (own recipients only);
 - `CctpDepositForBurn{destination_domain, burn_token}`;
@@ -90,7 +252,7 @@ Allowlisted rule kinds today:
 - `PlanExecute`;
 - `NativeTransfer{max_value}`, meant to be temporary.
 
-New protocols are added by the policy owner as `(chain, contract, selector) → rule`.
+The policy owner adds new protocols as `(chain, contract, selector) → rule`.
 
 ### Plug in any AI agent (MCP)
 
@@ -100,118 +262,69 @@ New protocols are added by the policy owner as `(chain, contract, selector) → 
 |---|---|
 | `intentguard_status` | derived address, allowance left on NEAR and Monad, passkey registration, balances |
 | `intentguard_propose_plan` | natural language or structured intent → checked plan + approval link; out-of-policy plans come back `BLOCKED` with the reason |
-| `intentguard_recent_decisions` | the policy contract's latest allowed / rejected requests |
+| `intentguard_recent_decisions` | the policy contract's latest allowed and rejected requests |
 
 ```bash
 claude mcp add intentguard -e NEAR_USER=<you>.testnet -e APP_URL=https://<your-app> -- npx tsx <repo>/packages/mcp/src/server.ts
 ```
 
-The user opens the link, sees the same plan rebuilt from on-chain state, and approves it with the passkey. A prompt-injected agent can propose anything; nothing outside the policy gets signed.
+The user opens the link, sees the same plan rebuilt from on-chain state, and approves it with the passkey. A prompt-injected agent can propose anything; nothing outside the policy gets signed, and nothing without the passkey gets executed on Monad.
 
 ## Reference app (PWA)
 
-[`apps/web`](apps/web) (Next.js, installable): setup (NEAR account, on-device function-call key, passkey, registration on Monad), command → plan → one passkey approval → policy-gated execution with explorer links, a live **guard log** of the policy contract, and an **attack demo** where a hijacked agent is stopped three times: by the planner, by the NEAR policy on-chain, and by `PlanExecutor`'s passkey check. LLM keys stay server-side; the deterministic parser keeps it working without them.
+[`apps/web`](apps/web) is an installable Next.js app:
+- **setup:** NEAR account, on-device function-call key, passkey, registration on Monad;
+- **guard:** command → plan → one passkey approval → policy-gated execution on Monad, with explorer links;
+- **guard log:** a live view of the policy contract's decisions;
+- **attack demo:** a hijacked agent is stopped three times, by the planner, by the NEAR policy on-chain, and by `PlanExecutor`'s passkey check on Monad.
 
-## Monad integration
-
-- **P256 precompile `0x0100` (EIP-7951 on Monad)** verifies WebAuthn passkeys on-chain inside `PlanExecutor`. A live probe against Monad testnet confirms it: a valid assertion is accepted and a tampered one rejected (`scripts/live-checks/webauthn_live_probe.sh`). The whole `WebAuthn.verify` costs about **10.5k gas** with the precompile (`contracts/evm/test/MonadGas.t.sol`), cheap enough to check the passkey on every plan.
-- **Monad-aware engineering:** Foundry with `network = "monad"`. Monad charges the gas **limit**, so every tx uses estimate × 1.25 and the policy caps the gas limit and fees. One tx at a time per address.
-- **Real cross-chain liquidity into Monad:** Circle CCTP V2 fast transfer from Base Sepolia (domain 6) to Monad (domain 15). The attestation comes from Circle's Iris sandbox API.
-
-Deployed contracts (Monad testnet, chain 10143):
-
-| Contract | Address | Deploy tx |
-|---|---|---|
-| PlanExecutor | [`0x3f1391EC12002E10E18Efa82Af5E491f8159faC1`](https://testnet.monadexplorer.com/address/0x3f1391EC12002E10E18Efa82Af5E491f8159faC1) | [0x56a46ee3…](https://testnet.monadexplorer.com/tx/0x56a46ee3abae5f16c03fca508e24f0190a6872b7b09417287c27ffd1870fb313) |
-| MiniSwap (USDC/WMON, x·y=k) | [`0x3D06B01a6B164322013547BEB4Fe0AfF985870f8`](https://testnet.monadexplorer.com/address/0x3D06B01a6B164322013547BEB4Fe0AfF985870f8) | [0x2cd37e3e…](https://testnet.monadexplorer.com/tx/0x2cd37e3ef021fed2093227d25f4c4c92b8201d353173fb70fe5866f9b89555e7) |
-| DemoVault (mock ERC-4626) | [`0x66C210D79d24a09FCa1F8Aae8c3a98A58F578914`](https://testnet.monadexplorer.com/address/0x66C210D79d24a09FCa1F8Aae8c3a98A58F578914) | [0x197892b7…](https://testnet.monadexplorer.com/tx/0x197892b79efaa76d6824745a633923aabd9eb60d76b71cef868d7c63235202fd) |
-
-The user's derived address is `0xd2FE6a3Ae252D6fb2f604805898177c8FdaAa24B`, the same on Monad and Base Sepolia.
-
-**Real full demo in one run** (`node scripts/cctp-base-to-monad.mjs --amount 2 --execute`, 135 s). One passkey-approved plan covers 5 signatures, each MPC-signed through the policy:
-
-| Step | Tx |
-|---|---|
-| Base Sepolia: USDC approve → TokenMessengerV2 | [0x451d02b9…](https://sepolia.basescan.org/tx/0x451d02b978e82dd3c13bcfc87e351bb22380d1757977916e201621e5f6a4b23f) |
-| Base Sepolia: `depositForBurn` 2 USDC, fast transfer | [0x8b1c6040…](https://sepolia.basescan.org/tx/0x8b1c6040af0300d49d5cc854ac5adc1c54e9877d6768c9aabd06fd7b48e68eda) |
-| Monad: `receiveMessage`, 1.99974 USDC minted (attestation after 28 s) | [0x57986db9…](https://testnet.monadexplorer.com/tx/0x57986db9ce312e0d50b418d84d3add2fd4903911299e1a57adc9b9928679feaa) |
-| Monad: USDC approve → PlanExecutor | [0xc2fa45e8…](https://testnet.monadexplorer.com/tx/0xc2fa45e863b0005074144d884daacaee61090e3d2c910feddb1556f7d5002e8b) |
-| Monad: `PlanExecutor.execute`, passkey verified on-chain; half swapped to native MON, half into the vault | [0x4c0501ea…](https://testnet.monadexplorer.com/tx/0x4c0501ea37f917411543aab82536235a5a7fb6c2ecbba4339499a5919852585d) |
-
-Other real runs:
-- First MPC-signed broadcast on Monad: [0x9beb0227…](https://testnet.monadexplorer.com/tx/0x9beb0227b8d8578a47ca5853ee4831cc907c5714533bf47fcc76f1809b785d4a).
-- First passkey-verified `execute`: [0x970c7022…](https://testnet.monadexplorer.com/tx/0x970c7022d4a7846cac0f515bf3a8dda2e2a209f5fb988d760f08e301aa47628f).
-- Standalone CCTP leg in 67 s: [burn](https://sepolia.basescan.org/tx/0x5c9a64352d4b2ebed79d91f860c57b74db773860cae637d10b78156ee6fe22eb) → [mint](https://testnet.monadexplorer.com/tx/0x749fe4500c991156573080bd89ad4db06358489a1d7ee4fac6e023abf6e179a6).
-
-Every hash is in [`deployments/`](deployments/).
-
-**Negative cases, rejected on-chain:**
-- A plan over the weekly cap is rejected by NEAR `commit_plan` («weekly cap exceeded»).
-- «Send 50 USDC to 0xabc» is rejected by NEAR `request_signature` («recipient not in your allowlist»).
-- A 6 USDC plan with a *valid* passkey signature reverts in `PlanExecutor` with `OverWeeklyCap`.
+LLM keys stay server-side, and the deterministic parser keeps the app working without them.
 
 ## Security model
 
 | Threat | Mitigation |
 |---|---|
-| Compromised agent or leaked function-call key | It can only request signatures for allowlisted calls whose recipients are the user's own addresses, within the plan budget, the signature count, the TTL and the weekly cap. It cannot loosen the policy, because that needs a 1 yocto deposit from the full-access key. |
+| Forged passkey approval | WebAuthn verified on-chain on Monad (P256 precompile) with user verification required. Solady enforces low-S signatures. |
+| Replay, cross-chain or cross-deployment replay | `planHash` binds chain id and contract address. There is a per-account nonce, `executed[hash]` and a deadline. |
+| Hijacked or prompt-injected agent | The agent only proposes. The off-chain planner, the NEAR policy and `PlanExecutor` each refuse plans outside the policy. Invariant tests fuzz replays, foreign passkeys, edited plans and time jumps ([`PlanExecutorInvariant.t.sol`](contracts/evm/test/PlanExecutorInvariant.t.sol)). |
+| Compromised agent or leaked function-call key | It can only request signatures for allowlisted calls to the user's own addresses, within the plan budget, the signature count, the TTL and the weekly cap. It cannot loosen the policy, because that needs a 1 yocto deposit from the full-access key. |
 | Fee draining (Monad charges the gas limit) | Gas limit ≤ 2M and `maxFeePerGas` ≤ 1000 gwei are enforced before signing. Native value transfers are rejected unless an explicit `NativeTransfer` rule exists. |
 | Unlimited approvals, foreign spenders | `approve` is allowed only on USDC, only to the allowlisted spender, and the amount must be ≤ the plan budget. |
-| Replay, cross-chain or cross-deployment replay | `planHash` binds chain id and contract address. There is a per-account nonce, `executed[hash]` and a deadline. |
-| Forged passkey approval | WebAuthn verification on-chain (P256 precompile) with user verification required. Low-S signatures are enforced by Solady. |
-| Hijacked or prompt-injected agent | The agent only proposes. Off-chain planner, NEAR policy and `PlanExecutor` each refuse plans outside the policy; invariant tests fuzz replays, foreign passkeys, edited plans and time jumps (`contracts/evm/test/PlanExecutorInvariant.t.sol`). |
 | MPC failure mid-plan | The callback returns the signature slot, so the plan can retry. |
 
 Known limits:
-- The passkey is verified on Monad, not on NEAR, so NEAR's guarantee is "bounded to the user's own addresses and caps".
-- `CctpDepositForBurn` caps CCTP `maxFee` at 0.5% of the amount (in this repo; the deployed testnet policy needs the upgrade in `docs/CHIAVI.md` §5).
+- The passkey is verified on Monad, not on NEAR. NEAR's guarantee is therefore "bounded to the user's own addresses and caps".
+- `CctpDepositForBurn` caps the CCTP `maxFee` at 0.5% of the amount in this repo; the deployed testnet policy needs the upgrade described in `docs/CHIAVI.md` §5.
 - The policy owner curates the allowlist.
 - MiniSwap and DemoVault are demo contracts.
-- The passkey used in the headless runs is a software test key. The PWA uses a real device passkey.
+- The passkey in the headless runs is a software test key. The PWA uses a real device passkey.
 
 ## Track 04 fit and bounties
 
-- **Track 04, Trust, Identity & AI Infrastructure.** IntentGuard is a primitive: a passkey identity, user-signed spending policies and on-chain enforcement that other agents and wallets plug into. It is not a closed consumer app.
-- **Mera: "One Passkey, Many Keys".** One device passkey plus one NEAR account control deterministic secp256k1 keys on every EVM chain via Chain Signatures, with no seed phrase.
-- **Aurora Intents: any-chain liquidity to Monad.** Real CCTP V2 into Monad, gated by intent plans. A NEAR Intents 1Click route is the mainnet path; 1Click has no testnet.
-- **MetaMask Agent Wallet Plugin.** The 5-call integration and the MCP server give agents a plan → passkey → policy-gated signing flow. A MetaMask Snap wrapper is not built.
+- **Track 04: Trust, Identity & AI Infrastructure.** IntentGuard is a primitive for Monad: a passkey identity verified on Monad, user-signed spending policies, and on-chain enforcement that other agents and wallets plug into. It is not a closed consumer app.
+- **Mera, "One Passkey, Many Keys".** One device passkey plus one NEAR account control deterministic secp256k1 keys on every EVM chain via Chain Signatures, with no seed phrase.
+- **Aurora Intents, any-chain liquidity to Monad.** Real CCTP V2 into Monad, gated by intent plans. A NEAR Intents 1Click route is the mainnet path; 1Click has no testnet.
+- **MetaMask Agent Wallet Plugin.** The 5-call integration and the MCP server give agents a plan → passkey → policy-gated signing flow. A MetaMask Snap wrapper is not built yet.
 
-## Repo layout and setup
+**Next steps:** passkey verification on NEAR as well, a code audit, mainnet on Monad and Base with NEAR Intents 1Click, and a MetaMask Snap wrapper.
+
+## Repo layout
 
 ```
-apps/web/               reference PWA (Next.js): setup, plan + passkey approval, execution timeline, guard log, attack demo
+contracts/evm/          Foundry (network = "monad"): PlanExecutor, MiniSwap, DemoVault, Deploy.s.sol, tests (forge-std, solady as submodules)
+contracts/near-policy/  Rust near-sdk 5: policy contract + unit tests + local sandbox test
+contracts/mock-mpc/     mock MPC signer (local sandbox only)
 packages/core/          intent schema (zod), rules parser, deterministic planner, planHash, WebAuthn struct (bigint only)
 packages/signer/        NEAR policy client, Chain Signatures derivation, MPC signing pipeline, CCTP helpers, plan runner
 packages/mcp/           MCP server for AI agents (read + propose, no keys)
-contracts/evm/          Foundry: PlanExecutor, MiniSwap, DemoVault, Deploy.s.sol, tests (forge-std, solady as submodules)
-contracts/near-policy/  Rust near-sdk 5: policy contract + unit tests + local sandbox test
-contracts/mock-mpc/     mock MPC signer (local sandbox only)
+apps/web/               reference PWA (Next.js): setup, plan + passkey approval, execution timeline, guard log, attack demo
 scripts/                reference client: lib/mpc.mjs, cctp-base-to-monad.mjs, live-checks/
-deployments/            every deployed address and tx hash (NEAR, Monad, CCTP runs)
+deployments/            every deployed address and tx hash (Monad, NEAR, CCTP runs)
 app-demo/               static UI prototype of the reference wallet PWA
-docs/                   project plan (IT), CLAUDE.md, prompts
+docs/                   project plan (IT), CLAUDE.md, prompts, submission write-up
 ```
-
-```bash
-git clone --recurse-submodules https://github.com/francescantonio-stack/Intentguard && cd Intentguard
-./run-all-checks.sh   # forge tests, Monad-fork test, cargo tests, NEAR sandbox, read-only live checks
-pnpm install && pnpm -r test && pnpm --filter @intentguard/web dev   # TS packages + the PWA on localhost:3000
-```
-
-Requirements: Foundry ≥ 1.8, Rust stable with the `wasm32-unknown-unknown` target, `cargo-near` 0.22, Node 20, Python 3 with `cryptography`.
 
 Real testnet txs need `near-cli-rs` with a funded NEAR testnet account in the local keychain (`~/.near-credentials`). Keys are never stored in this repo.
-
-Results on a fresh clone:
-
-| Suite | Result |
-|---|---|
-| Foundry (unit, fuzz, 5 invariants over 8,192 random calls, WebAuthn vectors incl. one produced by Chromium through the app's code) | 43 passed, 2 skipped |
-| TypeScript (core, signer, MCP) | 56 passed |
-| Monad testnet fork | 2 passed |
-| NEAR unit | 26 passed |
-| NEAR sandbox (policy → mock MPC → callback) | passed |
-| Live P256 / WebAuthn probes on Monad and Base Sepolia | passed |
 
 Detailed Italian working notes are in [README.it.md](README.it.md).
 

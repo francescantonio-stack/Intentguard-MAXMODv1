@@ -31,14 +31,16 @@ Layout del repo: codice nella radice, documenti di progetto in `docs/` (`piano.m
 
 Alzare il tetto o aggiungere destinatari richiede **1 yoctoNEAR**: lo può fare solo la chiave full-access (il wallet), non la chiave function-call della PWA. Infine il contratto chiama `sign` sull'MPC (`payload_v2.Ecdsa`, `domain_id` 0, 1 yocto) con una callback che restituisce lo slot di firma se l'MPC fallisce. Gli eventi sono NEP-297.
 
-## Risultati dei test (3/10/2026)
+## Risultati dei test (rieseguiti il 10/10/2026)
 
 | Suite | Risultato |
 |---|---|
-| `forge test` (unit + fuzz da 512 run + vettori indipendenti) | **39 passati, 0 falliti**, 2 saltati (fork disattivato di default; vettore "browser" in attesa del tuo file) |
-| `FORK=1 forge test` (in più il fork locale di Monad testnet con USDC Circle e WMON reali) | **41 passati, 0 falliti**, 1 saltato (vettore browser) |
-| `cargo test --lib` (policy NEAR) | **26 passati, 0 falliti** (rieseguito dopo la regola NativeTransfer; anche il sandbox ripassa) |
-| `cargo test --test sandbox -- --ignored` (sandbox NEAR locale: policy → MPC finto → callback) | **1 passato, 0 falliti** |
+| `forge test` (unit + fuzz da 512 run + 5 invarianti + vettori indipendenti, incluso quello Chromium) | **43 passati, 0 falliti**, 2 saltati (fork disattivato di default; vettore "browser" in attesa del tuo file) |
+| `forge test --match-contract MonadGas -vv` (gas di `WebAuthn.verify` con il precompile P256 di Monad) | **10.450 gas** |
+| `FORK=1 forge test --match-contract MonadFork` (fork locale di Monad testnet con USDC Circle e WMON reali) | **2 passati, 0 falliti** (ultima esecuzione 3/10/2026: serve l'RPC di Monad) |
+| `pnpm -r test` (pacchetti TypeScript core, signer, MCP) | **58 passati, 0 falliti**, 1 saltato (controllo live di `planHash`, si attiva con `LIVE=1`) |
+| `cargo test --lib` (policy NEAR) | **27 passati, 0 falliti** |
+| `cargo test --test sandbox -- --ignored` (sandbox NEAR locale: policy → MPC finto → callback) | **1 passato, 0 falliti** (ultima esecuzione 3/10/2026) |
 
 Test negativi richiesti, tutti verdi:
 - **Lato EVM**:
@@ -75,7 +77,7 @@ Nota: l'esempio usa account d'esempio (`intentguard-policy.testnet`, `maxz-demo.
 Prerequisiti, già installati su questa macchina: Foundry ≥ 1.8 (qui 1.8.4), Rust stable + target `wasm32-unknown-unknown`, `cargo-near` 0.22, Node 20, Python 3 con `cryptography`.
 
 ```bash
-git clone --recurse-submodules https://github.com/francescantonio-stack/Intentguard && cd Intentguard
+git clone --recurse-submodules https://github.com/francescantonio-stack/Intentguard-MAXMODv1 && cd Intentguard-MAXMODv1
 # (se hai già clonato: git submodule update --init --recursive)
 ./run-all-checks.sh                       # tutto: forge, fork, cargo, sandbox, verifiche live
 
