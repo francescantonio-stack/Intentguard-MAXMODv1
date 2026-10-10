@@ -5,6 +5,7 @@
 <body style="font-family:system-ui;max-width:760px;margin:2rem auto">
 <h3>IntentGuard: genera un vettore WebAuthn reale (solo test)</h3>
 <button id="go">1) Crea passkey e firma una challenge di prova</button>
+<button id="copy" hidden>2) Copia JSON</button>
 <pre id="out" style="white-space:pre-wrap;background:#f4f4f4;padding:1rem"></pre>
 <script>
 const N = 0xFFFFFFFF00000000FFFFFFFFFFFFFFFFBCE6FAADA7179E84F3B9CAC2FC632551n;
@@ -33,7 +34,10 @@ document.getElementById('go').onclick = async () => {
     const { r, s } = derToRS(a.response.signature);
     const vec = { challenge: hex(challenge), authenticatorData: hex(a.response.authenticatorData), clientDataJSON,
       challengeIndex: clientDataJSON.indexOf('"challenge":"'), typeIndex: clientDataJSON.indexOf('"type":"'), r, s, x, y };
-    out.textContent = 'Salva questo JSON come contracts/evm/test/fixtures/browser_vector.json e lancia forge test:\n\n' + JSON.stringify(vec, null, 1);
+    const json = JSON.stringify(vec, null, 1);
+    out.textContent = 'Salva questo JSON come contracts/evm/test/fixtures/browser_vector.json e lancia forge test:\n\n' + json;
+    const btn = document.getElementById('copy'); btn.hidden = false;
+    btn.onclick = async () => { await navigator.clipboard.writeText(json); btn.textContent = 'Copiato ✓'; };
   } catch (e) { out.textContent = 'Errore: ' + e; }
 };
 </script></body></html>
