@@ -44,7 +44,7 @@ jobs:
           submodules: recursive
       - uses: foundry-rs/foundry-toolchain@v1
         with:
-          version: stable # foundry.toml needs >= 1.8 (network = "monad")
+          version: v1.8.1 # foundry.toml needs >= 1.8 (network = "monad"); the "stable" tag is older and fails the P256 tests
       - run: forge --version
       - run: forge test -vv
 

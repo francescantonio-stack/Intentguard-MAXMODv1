@@ -4,6 +4,8 @@ set -euo pipefail
 ROOT="$(cd "$(dirname "$0")" && pwd)"
 export PATH="$HOME/.foundry/bin:$HOME/.cargo/bin:$PATH"
 
+FV="$(forge --version | head -1 | grep -oE '[0-9]+\.[0-9]+\.[0-9]+' | head -1)"
+case "$FV" in 0.*|1.[0-7].*) echo "Foundry $FV is too old: network = \"monad\" needs >= 1.8 (foundryup --install v1.8.1)"; exit 1;; esac
 echo "== 1/5 Foundry unit + fuzz tests"
 (cd "$ROOT/contracts/evm" && forge test)
 echo "== 2/5 Foundry integration test on a LOCAL fork of Monad testnet (real USDC/WMON, nothing is broadcast)"

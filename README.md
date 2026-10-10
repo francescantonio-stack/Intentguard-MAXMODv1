@@ -166,7 +166,7 @@ The first case is the important one: even a genuine passkey signature cannot pus
 ## Run the tests locally
 
 **Requirements:**
-- **Foundry ≥ 1.8.** `foundry.toml` sets `network = "monad"`, which needs it.
+- **Foundry ≥ 1.8** (tested with v1.8.1): `foundryup --install v1.8.1`. `foundry.toml` sets `network = "monad"`, which needs it. Plain `foundryup` installs the older "stable" release (1.5.x), which ignores `network = "monad"`: the P256 precompile is then missing and the passkey tests fail.
 - Node 20+ with pnpm.
 - Rust stable with the `wasm32-unknown-unknown` target, and `cargo-near` 0.22 (only for the NEAR sandbox).
 - Python 3 with `cryptography` (only for the live checks).
