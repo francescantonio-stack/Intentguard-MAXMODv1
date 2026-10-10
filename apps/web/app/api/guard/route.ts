@@ -1,6 +1,7 @@
 import { DEFAULT_CONFIG, guardLog } from "@intentguard/signer";
 
 export const dynamic = "force-dynamic";
+export const maxDuration = 60;
 
 /** Latest decisions of the policy contract (public data: nearblocks testnet + NEAR RPC). */
 export async function GET() {

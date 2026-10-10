@@ -14,7 +14,7 @@ An AI agent proposes a plan. The user approves it once with a device passkey (We
 | Passkey check cost | **10,450 gas** per `WebAuthn.verify` with the P256 precompile ([`MonadGas.t.sol`](contracts/evm/test/MonadGas.t.sol)) |
 | Passkey-verified execution | [`0x4c0501ea…`](https://testnet.monadexplorer.com/tx/0x4c0501ea37f917411543aab82536235a5a7fb6c2ecbba4339499a5919852585d): half swapped to native MON, half deposited into the vault |
 
-**Contents:** [Why Monad](#why-monad) · [Architecture](#architecture) · [Deployed on Monad testnet](#deployed-on-monad-testnet) · [Run the tests locally](#run-the-tests-locally) · [Attacks blocked](#attacks-blocked-on-chain) · [Integration guide](#integration-guide-for-third-party-agents-and-wallets) · [Security model](#security-model)
+**Contents:** [Why Monad](#why-monad) · [Architecture](#architecture) · [Deployed on Monad testnet](#deployed-on-monad-testnet) · [Run the tests locally](#run-the-tests-locally) · [Attacks blocked](#attacks-blocked-on-chain) · [Integration guide](#integration-guide-for-third-party-agents-and-wallets) · [Reference app](#reference-app-pwa) · [Deploy on Vercel](#deploy-on-vercel) · [Security model](#security-model)
 
 ---
 
@@ -167,7 +167,7 @@ The first case is the important one: even a genuine passkey signature cannot pus
 
 **Requirements:**
 - **Foundry ≥ 1.8** (tested with v1.8.1): `foundryup --install v1.8.1`. `foundry.toml` sets `network = "monad"`, which needs it. Plain `foundryup` installs the older "stable" release (1.5.x), which ignores `network = "monad"`: the P256 precompile is then missing and the passkey tests fail.
-- Node 20+ with pnpm.
+- Node 22 with pnpm (the PWA on Vercel is pinned to 22.x).
 - Rust stable with the `wasm32-unknown-unknown` target, and `cargo-near` 0.22 (only for the NEAR sandbox).
 - Python 3 with `cryptography` (only for the live checks).
 
@@ -280,6 +280,42 @@ The user opens the link, sees the same plan rebuilt from on-chain state, and app
 - **attack demo:** a hijacked agent is stopped three times, by the planner, by the NEAR policy on-chain, and by `PlanExecutor`'s passkey check on Monad.
 
 LLM keys stay server-side, and the deterministic parser keeps the app working without them.
+
+### Deploy on Vercel
+
+Import the **repository root**, then set the project as below. `*.vercel.app` is HTTPS, which is required for real passkeys. The user connects the Vercel account; this repo is already wired for that import.
+
+| Setting | Value |
+|---|---|
+| Framework | Next.js |
+| Root Directory | `apps/web` |
+| Install Command | `pnpm install --frozen-lockfile --filter @intentguard/web...` |
+| Build Command | `pnpm build` |
+| Node.js Version | **22.x** |
+| Output | leave the Next.js default |
+
+[`apps/web/vercel.json`](apps/web/vercel.json) already pins the install and build commands. Workspace packages (`@intentguard/core`, `@intentguard/signer`) are TypeScript source: Next.js transpiles them (`transpilePackages`) and traces them from the monorepo root (`outputFileTracingRoot`). The PWA never reads `~/.near-credentials` or other local files; the device function-call key lives in the browser.
+
+**Environment variables** (Project → Settings → Environment Variables, Production + Preview). None are required. With no LLM key the rules parser still handles the demo command. Full list: [`.env.example`](.env.example).
+
+| Variable | Where | Required | Default |
+|---|---|---|---|
+| `NEXT_PUBLIC_POLICY_CONTRACT_ID` | Public | no | `intentguard-973f6c.testnet` |
+| `NEXT_PUBLIC_RP_ID` | Public | no | current hostname (`window.location.hostname`) |
+| `NEXT_PUBLIC_APP_URL` | Public | no | `https://$VERCEL_URL` |
+| `LLM_PROVIDER` | Server | no | `rules` (or `gemini` / `groq` if a key is set) |
+| `GEMINI_API_KEY` | Server | no | unset → rules parser |
+| `GEMINI_MODEL` | Server | no | `gemini-3.5-flash-lite` |
+| `GROQ_API_KEY` | Server | no | unset |
+| `GROQ_MODEL` | Server | no | `openai/gpt-oss-20b` |
+| `MONAD_RPC_URL` | Server | no | `https://testnet-rpc.monad.xyz` (chain 10143) |
+| `BASE_SEPOLIA_RPC_URL` | Server | no | `https://sepolia.base.org` (chain 84532) |
+| `NEAR_RPC_URL` | Server | no | `https://rpc.testnet.near.org` |
+| `CIRCLE_IRIS_API_URL` | Server | no | `https://iris-api-sandbox.circle.com` |
+
+Do **not** set `NEAR_PRIVATE_KEY`, `DEPLOYER_PRIVATE_KEY`, or any secret as `NEXT_PUBLIC_*`. LLM keys stay server-side.
+
+**After deploy (manual):** open the Vercel URL on the phone, create the passkey **on that origin** (a localhost passkey will not work on `*.vercel.app`), and run the three `near` CLI commands shown on Setup. Optional: set `GEMINI_API_KEY` for nicer parsing. Preview URLs (`*-git-*.vercel.app`) have a different host than production, so passkeys do not carry across.
 
 ## Security model
 

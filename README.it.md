@@ -55,6 +55,42 @@ Test negativi richiesti, tutti verdi:
 
 Gas misurato sul fork di Monad: `execute` (swap + unwrap + deposito) **≈ 567.000 gas**. Deploy dei 3 contratti **≈ 4,53 M gas**; forge stima che serva un saldo di **≈ 0,92 MON** (con max fee 203 gwei; il costo effettivo a 100–103 gwei è circa la metà).
 
+## Deploy della PWA su Vercel
+
+Importa la **radice del repo**, poi imposta il progetto così. `*.vercel.app` è HTTPS, necessario per le passkey vere. Il collegamento dell'account Vercel lo fai tu; il repo è già pronto per quell'import.
+
+| Impostazione | Valore |
+|---|---|
+| Framework | Next.js |
+| Root Directory | `apps/web` |
+| Install Command | `pnpm install --frozen-lockfile --filter @intentguard/web...` |
+| Build Command | `pnpm build` |
+| Node.js Version | **22.x** |
+| Output | lasciare il default Next.js |
+
+[`apps/web/vercel.json`](apps/web/vercel.json) fissa già install e build. I pacchetti workspace (`@intentguard/core`, `@intentguard/signer`) sono TypeScript sorgente: Next.js li transpila (`transpilePackages`) e li traccia dalla radice del monorepo. La PWA non legge `~/.near-credentials` né altri file locali: la chiave function-call sta nel browser.
+
+**Variabili d'ambiente** (Project → Settings → Environment Variables, Production + Preview). Nessuna è obbligatoria. Senza chiave LLM il parser a regole gestisce comunque il comando demo. Elenco completo: [`.env.example`](.env.example).
+
+| Variabile | Dove | Obbligatoria | Default |
+|---|---|---|---|
+| `NEXT_PUBLIC_POLICY_CONTRACT_ID` | Pubblica | no | `intentguard-973f6c.testnet` |
+| `NEXT_PUBLIC_RP_ID` | Pubblica | no | hostname della pagina |
+| `NEXT_PUBLIC_APP_URL` | Pubblica | no | `https://$VERCEL_URL` |
+| `LLM_PROVIDER` | Solo server | no | `rules` (o `gemini` / `groq` se c'è la chiave) |
+| `GEMINI_API_KEY` | Solo server | no | vuota → parser a regole |
+| `GEMINI_MODEL` | Solo server | no | `gemini-3.5-flash-lite` |
+| `GROQ_API_KEY` | Solo server | no | vuota |
+| `GROQ_MODEL` | Solo server | no | `openai/gpt-oss-20b` |
+| `MONAD_RPC_URL` | Solo server | no | `https://testnet-rpc.monad.xyz` (chain 10143) |
+| `BASE_SEPOLIA_RPC_URL` | Solo server | no | `https://sepolia.base.org` (chain 84532) |
+| `NEAR_RPC_URL` | Solo server | no | `https://rpc.testnet.near.org` |
+| `CIRCLE_IRIS_API_URL` | Solo server | no | `https://iris-api-sandbox.circle.com` |
+
+Non impostare `NEAR_PRIVATE_KEY`, `DEPLOYER_PRIVATE_KEY` né alcun segreto come `NEXT_PUBLIC_*`. Le chiavi LLM restano solo sul server.
+
+**Dopo il deploy (a mano):** apri l'URL Vercel sul telefono, crea la passkey **su quell'origine** (una passkey da localhost non vale su `*.vercel.app`) ed esegui i tre comandi `near` mostrati in Setup. Facoltativo: `GEMINI_API_KEY` per un parsing più morbido. Gli URL di preview (`*-git-*.vercel.app`) hanno un host diverso dalla production: le passkey non si trasferiscono.
+
 ## Verifiche live (sola lettura, RPC pubbliche)
 
 | Verifica | Esito |

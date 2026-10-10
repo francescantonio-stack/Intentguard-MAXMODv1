@@ -5,12 +5,22 @@ const b64u = (b: ArrayBuffer) =>
   btoa(String.fromCharCode(...new Uint8Array(b))).replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/, "");
 const fromB64u = (s: string) => Uint8Array.from(atob(s.replace(/-/g, "+").replace(/_/g, "/")), (c) => c.charCodeAt(0));
 
+/**
+ * WebAuthn rpId for this page. Never hardcoded to localhost.
+ * Uses NEXT_PUBLIC_RP_ID when set (must be a suffix of the current host), otherwise the request host.
+ */
+export function relyingPartyId(hostname = typeof window === "undefined" ? "" : window.location.hostname): string {
+  const pinned = process.env.NEXT_PUBLIC_RP_ID?.trim();
+  if (pinned) return pinned;
+  return hostname || "localhost";
+}
+
 /** Creates a device passkey (P-256, user verification required) and returns its public key for PlanExecutor. */
 export async function createPasskey(label: string): Promise<{ credentialId: string; x: Hex; y: Hex }> {
   const cred = (await navigator.credentials.create({
     publicKey: {
       challenge: crypto.getRandomValues(new Uint8Array(32)),
-      rp: { name: "IntentGuard" },
+      rp: { name: "IntentGuard", id: relyingPartyId() },
       user: { id: crypto.getRandomValues(new Uint8Array(16)), name: label, displayName: label },
       pubKeyCredParams: [{ type: "public-key", alg: -7 }],
       authenticatorSelection: { residentKey: "preferred", userVerification: "required" },
@@ -32,6 +42,7 @@ export async function approvePlan(credentialId: string, planId: Hex): Promise<We
   const cred = (await navigator.credentials.get({
     publicKey: {
       challenge: new Uint8Array(planChallenge(planId)),
+      rpId: relyingPartyId(),
       allowCredentials: [{ type: "public-key", id: fromB64u(credentialId) }],
       userVerification: "required",
       timeout: 120_000,
