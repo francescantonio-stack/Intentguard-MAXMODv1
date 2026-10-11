@@ -371,6 +371,12 @@ A DEX aggregator (not more in-house MiniSwap pools) so a plan can sell tokens ot
 
 The live testnet path stays Circle USDC → MiniSwap USDC/WMON → DemoVault. Do not read this section as support for extra tokens in the current PWA.
 
+### On-device planner
+
+A small local model (e.g. Gemma / Qwen 1–4B via llama.cpp or MLC) running **on the phone**, with no cloud API. Small models make more mistakes; IntentGuard is why that is fine: the rules live **outside** the agent — the NEAR policy before any signature exists, and the passkey check on Monad at execution.
+
+Today the planner is a **deterministic rules parser**, plus an optional **server-side** LLM (Gemini / Groq) when a key is set. "No cloud API required" is already true: the demo command works with `LLM_PROVIDER=rules`. On-device AI is planned, not built.
+
 ## Repo layout
 
 ```

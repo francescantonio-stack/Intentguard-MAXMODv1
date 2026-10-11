@@ -110,7 +110,7 @@ function Landing() {
           <InfoTip k="roadmap" />
         </div>
         <p className="max-w-2xl text-sm leading-relaxed text-gray-400">{t("landing.roadmapLead")}</p>
-        <div className="grid gap-3 lg:grid-cols-2">
+        <div className="grid gap-3 lg:grid-cols-3">
           <article className="rounded-xl border border-emerald-400/40 bg-emerald-500/10 p-4 shadow-[0_0_32px_rgba(16,185,129,0.08)]">
             <div className="flex flex-wrap items-center gap-1.5">
               <p className="text-xs font-medium uppercase tracking-wide text-emerald-300">
@@ -128,6 +128,16 @@ function Landing() {
             </div>
             <h3 className="mt-2 font-semibold text-white">{t("landing.roadmapSwapTitle")}</h3>
             <p className="mt-2 text-sm leading-relaxed text-gray-300">{t("landing.roadmapSwapBody")}</p>
+          </article>
+          <article className="rounded-xl border border-white/10 bg-white/[0.03] p-4">
+            <div className="flex flex-wrap items-center gap-1.5">
+              <p className="text-xs font-medium uppercase tracking-wide text-gray-500">
+                {t("landing.roadmapOnDeviceKicker")}
+              </p>
+              <InfoTip k="roadmapOnDevice" />
+            </div>
+            <h3 className="mt-2 font-semibold text-white">{t("landing.roadmapOnDeviceTitle")}</h3>
+            <p className="mt-2 text-sm leading-relaxed text-gray-300">{t("landing.roadmapOnDeviceBody")}</p>
           </article>
         </div>
       </section>

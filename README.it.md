@@ -311,6 +311,12 @@ Un aggregatore DEX (non altri pool MiniSwap nostri) così un piano può vendere 
 
 Il percorso testnet live resta Circle USDC → MiniSwap USDC/WMON → DemoVault. Questa sezione non è supporto per altri token nella PWA attuale.
 
+### Planner on-device
+
+Un modello locale piccolo (es. Gemma / Qwen 1–4B via llama.cpp o MLC) **sul telefono**, senza API cloud. I modelli piccoli sbagliano di più; IntentGuard è il motivo per cui va bene: le regole vivono **fuori** dall'agente — la policy NEAR prima che esista una firma, e il controllo passkey su Monad in esecuzione.
+
+Oggi il planner è un **parser a regole** deterministico, più un LLM **lato server** opzionale (Gemini / Groq) se c'è una chiave. «Nessuna API cloud obbligatoria» è già vero: il comando demo funziona con `LLM_PROVIDER=rules`. L'AI on-device è pianificata, non costruita.
+
 ## AI tools disclosure
 
 Questo progetto è stato costruito con l'aiuto di assistenti AI: **Claude Code** (Anthropic) e **Grok Bot**. Li abbiamo usati per scrivere il codice, i test, gli script e la documentazione, e per eseguire deploy e verifiche su testnet. Le decisioni di progetto e l'approvazione di ogni passo sono del team (Dominiumchain). Tutto il codice è stato eseguito e testato: i risultati sono riportati sopra.

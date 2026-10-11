@@ -102,3 +102,8 @@ setter and multi-spender / multi-domain rule variants.
 sell-tax, contract verification, liquidity thresholds), a price oracle so per-plan and weekly caps are denominated in
 USD rather than USDC only, and allowlisted routers in the NEAR policy. The live testnet path stays Circle USDC →
 MiniSwap → DemoVault.
+
+**On-device planner.** A small local model (e.g. Gemma / Qwen 1–4B via llama.cpp or MLC) on the phone, no cloud API.
+Small models make more mistakes; IntentGuard is why that is fine: the rules live outside the agent (NEAR policy before
+any signature, passkey check on Monad at execution). Today the planner is a deterministic rules parser plus an optional
+server-side LLM. "No cloud API required" is already true (`LLM_PROVIDER=rules`). On-device AI is planned, not built.

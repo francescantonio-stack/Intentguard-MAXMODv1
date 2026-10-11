@@ -144,6 +144,10 @@ export const it: Messages = {
         title: "Tetti in USD, non altri token demo",
         body: "I tetti oggi sono solo in USDC. Un oracolo di prezzo permetterebbe tetto per piano e tetto settimanale in USD, così altri token si possono spendere senza allentare il budget. Un router entra in allowlist solo dopo controlli honeypot / tassa di vendita, verifica e liquidità. È pianificazione mainnet, non un secondo pool MiniSwap.",
       },
+      roadmapOnDevice: {
+        title: "Parser a regole oggi, on-device dopo",
+        body: "La demo funziona già senza chiave LLM: un parser a regole deterministico trasforma il comando in un piano tipizzato. Una chiamata Gemini o Groq opzionale resta lato server. Gemma/Qwen sul telefono via llama.cpp o MLC non è costruito. Quando lo sarà, un parse sbagliato non può spendere: NEAR non firma e Monad non esegue senza la passkey su quel piano esatto.",
+      },
     },
   },
   landing: {
@@ -210,6 +214,10 @@ export const it: Messages = {
     roadmapSwapTitle: "Swap di qualsiasi token in mainnet",
     roadmapSwapBody:
       "Un aggregatore DEX con controlli sul token (honeypot / tassa di vendita, contratti verificati, soglie di liquidità), un oracolo di prezzo così i tetti sono in USD — non solo USDC — e router in allowlist sulla policy NEAR. Non altri pool MiniSwap, e non in questa demo.",
+    roadmapOnDeviceKicker: "Dopo · sul telefono",
+    roadmapOnDeviceTitle: "Planner on-device",
+    roadmapOnDeviceBody:
+      "Un modello locale piccolo (Gemma / Qwen 1–4B via llama.cpp o MLC) sul telefono, senza API cloud. I modelli piccoli sbagliano di più; va bene perché le regole vivono fuori dall'agente (policy NEAR + passkey su Monad). Oggi il planner è un parser a regole più un LLM lato server opzionale. Nessuna API cloud è obbligatoria oggi; l'AI on-device è in piano.",
   },
   app: {
     welcomeTitle: "Benvenuto in IntentGuard",
