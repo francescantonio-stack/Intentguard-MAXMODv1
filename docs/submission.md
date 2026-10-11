@@ -83,3 +83,22 @@ Testnet only, unaudited. `MiniSwap` and `DemoVault` are ours (mock liquidity, mo
 real. The passkey is verified on Monad, not yet on NEAR. The passkey in the headless runs is a software test key; the PWA
 uses a real device passkey. The shared policy contract owner curates the allowlist; users keep the full-access key needed
 to loosen their policy. Built with AI coding assistants (see README, "AI tools disclosure").
+
+## Roadmap
+
+**Planned, not built.** Monad stays the enforcement center: a `PlanExecutor` on each new chain still verifies the same
+device passkey through a cheap P256 precompile. The live demo remains USDC ↔ MON on Monad testnet. Extra MiniSwap demo
+tokens are out of scope here: the deployed `PlanExecutor` hardcodes USDC/WMON and the NEAR policy allowlists only those
+targets. Changing that would need a new executor, new pools and owner `add_rule` calls — it would replace the live demo.
+
+**Multichain execution.** Same derived EVM address on every EVM chain via path `"<user>,evm,1"`. Each chain gets its own
+`PlanExecutor`. First wave (cheap P256 + Circle CCTP V2 + a public testnet): Base, Arbitrum, Unichain. Then Ethereum, OP,
+Linea, World Chain, Ink, Avalanche, Polygon PoS, BNB Chain (no CCTP USDC), Sei (P256 at `0x1011`). After the EVM set:
+Solana (Ed25519 Chain Signatures, new executor). Requires a NEAR policy upgrade: chain ids are hardcoded today to 10143
+and 84532, USDC is set only in `new()`, and rules are single-spender / single-domain. That upgrade needs a `set_usdc`
+setter and multi-spender / multi-domain rule variants.
+
+**Any-token swaps on mainnet.** A DEX aggregator (not more in-house MiniSwap pools) with token safety checks (honeypot /
+sell-tax, contract verification, liquidity thresholds), a price oracle so per-plan and weekly caps are denominated in
+USD rather than USDC only, and allowlisted routers in the NEAR policy. The live testnet path stays Circle USDC →
+MiniSwap → DemoVault.

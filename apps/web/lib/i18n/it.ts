@@ -132,6 +132,18 @@ export const it: Messages = {
         title: "Passkey falsificata",
         body: "Anche con una tx già firmata, PlanExecutor su Monad pretende una asserzione WebAuthn valida sull'hash esatto del piano. Una firma falsificata fa revert. Monad è l'ultima linea di difesa.",
       },
+      roadmap: {
+        title: "Pianificato, non costruito",
+        body: "Queste voci sono una roadmap, non funzioni di questa demo. Il percorso live resta USDC → MON + vault su Monad testnet. Altri token MiniSwap non arrivano in questo hackathon: PlanExecutor ha USDC/WMON fissi e la policy NEAR già deployata permette solo quelle chiamate. Cambiarle richiederebbe un nuovo executor, nuovi pool e add_rule dell'owner: sostituirebbe la demo live.",
+      },
+      roadmapMultichain: {
+        title: "Perché serve l'upgrade della policy",
+        body: "Oggi la policy NEAR ha gli id di chain 10143 e 84532 fissi, imposta USDC solo in new() e salva uno spender / un dominio CCTP per regola. Un rollout multi-chain serve un setter set_usdc, varianti multi-spender e multi-domain, e un PlanExecutor su ogni chain. Il path \"<user>,evm,1\" tiene lo stesso indirizzo derivato ovunque.",
+      },
+      roadmapSwap: {
+        title: "Tetti in USD, non altri token demo",
+        body: "I tetti oggi sono solo in USDC. Un oracolo di prezzo permetterebbe tetto per piano e tetto settimanale in USD, così altri token si possono spendere senza allentare il budget. Un router entra in allowlist solo dopo controlli honeypot / tassa di vendita, verifica e liquidità. È pianificazione mainnet, non un secondo pool MiniSwap.",
+      },
     },
   },
   landing: {
@@ -186,6 +198,18 @@ export const it: Messages = {
     finalCtaBody: "La PWA è l'integrazione che altri agenti possono copiare: comando → piano → passkey → enforcement on-chain.",
     finalCtaApp: "Vai all'app",
     finalCtaAttack: "Vedi la demo di attacco",
+    roadmapTitle: "Roadmap",
+    roadmapBadge: "in piano",
+    roadmapLead:
+      "Non è costruito. Monad resta il centro: un PlanExecutor su ogni nuova chain verifica ancora la stessa passkey. La demo live resta USDC ↔ MON su Monad testnet.",
+    roadmapMultichainKicker: "Dopo · altre chain EVM",
+    roadmapMultichainTitle: "Esecuzione multichain",
+    roadmapMultichainBody:
+      "Stesso indirizzo derivato (<user>,evm,1) su ogni chain EVM. Prima: Base, Arbitrum, Unichain — P256 economico, Circle CCTP V2, testnet pubblica. Poi Ethereum, OP, Linea, World Chain, Ink, Avalanche, Polygon PoS, BNB Chain (niente USDC CCTP), Sei (P256 a 0x1011). Solana dopo (Ed25519, executor nuovo). Serve un upgrade della policy NEAR e un PlanExecutor per chain.",
+    roadmapSwapKicker: "Dopo · qualsiasi token",
+    roadmapSwapTitle: "Swap di qualsiasi token in mainnet",
+    roadmapSwapBody:
+      "Un aggregatore DEX con controlli sul token (honeypot / tassa di vendita, contratti verificati, soglie di liquidità), un oracolo di prezzo così i tetti sono in USD — non solo USDC — e router in allowlist sulla policy NEAR. Non altri pool MiniSwap, e non in questa demo.",
   },
   app: {
     welcomeTitle: "Benvenuto in IntentGuard",
