@@ -1,4 +1,7 @@
+"use client";
+
 import type { StepStatus } from "@intentguard/signer";
+import { useI18n } from "./I18nProvider";
 import { Ext } from "./ui";
 
 export type Item = {
@@ -13,10 +16,15 @@ export type Item = {
 
 const ICON: Record<Item["status"], string> = { pending: "○", running: "◌", done: "●", skipped: "–", failed: "✕" };
 const COLOR: Record<Item["status"], string> = {
-  pending: "text-gray-500", running: "text-amber-300 animate-pulse", done: "text-emerald-400", skipped: "text-gray-400", failed: "text-red-400",
+  pending: "text-gray-500",
+  running: "text-amber-300 animate-pulse",
+  done: "text-emerald-400",
+  skipped: "text-gray-400",
+  failed: "text-red-400",
 };
 
 export function Timeline({ items }: { items: Item[] }) {
+  const { t } = useI18n();
   return (
     <ol className="space-y-2">
       {items.map((it, i) => (
@@ -27,8 +35,8 @@ export function Timeline({ items }: { items: Item[] }) {
               <span className="text-gray-400">[{it.chain}]</span> {it.label}
             </div>
             <div className="flex flex-wrap gap-3 text-xs">
-              {it.explorer && <Ext href={it.explorer}>tx</Ext>}
-              {it.nearExplorer && <Ext href={it.nearExplorer}>NEAR policy tx</Ext>}
+              {it.explorer && <Ext href={it.explorer}>{t("timeline.tx")}</Ext>}
+              {it.nearExplorer && <Ext href={it.nearExplorer}>{t("timeline.nearTx")}</Ext>}
               {it.note && <span className="text-gray-400">{it.note}</span>}
             </div>
             {it.error && <div className="text-xs text-red-300">{it.error}</div>}

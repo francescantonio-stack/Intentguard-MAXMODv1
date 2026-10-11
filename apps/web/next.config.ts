@@ -10,6 +10,17 @@ const nextConfig: NextConfig = {
   transpilePackages: ["@intentguard/core", "@intentguard/signer"],
   outputFileTracingRoot: monorepoRoot,
   turbopack: { root: monorepoRoot },
+  // MCP and older links use /?intent=…; the planner lives at /app.
+  async redirects() {
+    return [
+      {
+        source: "/",
+        has: [{ type: "query", key: "intent", value: "(?<intent>.*)" }],
+        destination: "/app?intent=:intent",
+        permanent: false,
+      },
+    ];
+  },
 };
 
 export default nextConfig;

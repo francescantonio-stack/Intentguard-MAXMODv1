@@ -1,7 +1,9 @@
 import type { Metadata, Viewport } from "next";
-import Link from "next/link";
+import { cookies, headers } from "next/headers";
 import "./globals.css";
+import { AppShell } from "@/components/AppShell";
 import { SwRegister } from "@/components/SwRegister";
+import { COOKIE_LOCALE, isLocale, type Locale } from "@/lib/i18n/locale";
 
 export const metadata: Metadata = {
   title: "IntentGuard",
@@ -9,29 +11,19 @@ export const metadata: Metadata = {
 };
 export const viewport: Viewport = { themeColor: "#0b0f14", width: "device-width", initialScale: 1 };
 
-const nav = [
-  ["/", "App"],
-  ["/setup", "Setup"],
-  ["/guard", "Guard log"],
-  ["/attack", "Attack demo"],
-] as const;
+async function bootLocale(): Promise<Locale> {
+  const fromCookie = (await cookies()).get(COOKIE_LOCALE)?.value;
+  if (isLocale(fromCookie)) return fromCookie;
+  const fromHeader = (await headers()).get("x-intentguard-locale");
+  return isLocale(fromHeader) ? fromHeader : "en";
+}
 
-export default function RootLayout({ children }: { children: React.ReactNode }) {
+export default async function RootLayout({ children }: { children: React.ReactNode }) {
+  const locale = await bootLocale();
   return (
-    <html lang="en">
+    <html lang={locale}>
       <body className="min-h-screen">
-        <header className="border-b border-white/10">
-          <nav className="mx-auto flex max-w-3xl flex-wrap items-center gap-4 px-4 py-3 text-sm">
-            <span className="font-semibold text-emerald-400">IntentGuard</span>
-            {nav.map(([href, label]) => (
-              <Link key={href} href={href} className="text-gray-300 hover:text-white">
-                {label}
-              </Link>
-            ))}
-            <span className="ml-auto rounded bg-amber-500/15 px-2 py-0.5 text-xs text-amber-300">testnet only</span>
-          </nav>
-        </header>
-        <main className="mx-auto max-w-3xl space-y-4 px-4 py-6">{children}</main>
+        <AppShell initialLocale={locale}>{children}</AppShell>
         <SwRegister />
       </body>
     </html>

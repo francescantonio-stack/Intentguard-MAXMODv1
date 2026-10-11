@@ -7,3 +7,7 @@ body {
   background: #0b0f14;
   color: #e5e7eb;
 }
+
+.landing-hero {
+  background-image: radial-gradient(ellipse 80% 55% at 50% -10%, rgba(16, 185, 129, 0.16), transparent 60%);
+}
