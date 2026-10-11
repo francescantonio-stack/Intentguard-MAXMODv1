@@ -4,8 +4,10 @@ import { KeyPair } from "near-api-js";
 import { encodeAbiParameters, encodeFunctionData, keccak256 } from "viem";
 import { MONAD_TESTNET, planExecutorAbi } from "@intentguard/core";
 import { nearRpc, readState, signAndSend, userEvmAddress, type ChainState } from "@intentguard/signer";
+import { useI18n } from "@/components/I18nProvider";
 import { StatusBar } from "@/components/StatusBar";
-import { Button, Card, Err, Ext, Mono } from "@/components/ui";
+import { InfoTip } from "@/components/InfoTip";
+import { Action, Button, Card, Err, Ext, Mono } from "@/components/ui";
 import { accountOf, errorText, policyClient } from "@/lib/clients";
 import { cfg, FAUCETS, POLICY } from "@/lib/config";
 import { createPasskey } from "@/lib/passkey";
@@ -19,6 +21,7 @@ const cli = (user: string, fcPublicKey: string, derived: string) => [
 ];
 
 export default function SetupPage() {
+  const { t } = useI18n();
   const [s, setS] = useState<Setup>({});
   const [user, setUser] = useState("");
   const [state, setState] = useState<ChainState>();
@@ -58,15 +61,21 @@ export default function SetupPage() {
         /* not added yet */
       }
       const rec = u?.recipients.includes(derived!.toLowerCase());
-      setNearOk(`device key: ${key} · registered: ${u ? `yes, cap ${Number(u.weekly_cap) / 1e6} USDC/week` : "no"} · own address allowed: ${rec ? "yes" : "no"}`);
+      setNearOk(
+        t("setup.nearStatus", {
+          key: key === "ok" ? t("setup.keyOk") : t("setup.keyMissing"),
+          registered: u ? t("setup.registeredYes", { cap: String(Number(u.weekly_cap) / 1e6) }) : t("setup.registeredNo"),
+          allowed: rec ? t("setup.yes") : t("setup.no"),
+        }),
+      );
       setState(await readState(cfg(), policyClient(s), accountOf(s)));
     });
 
   const registerOnMonad = () =>
     run(async () => {
       const st = await readState(cfg(), policyClient(s), accountOf(s));
-      if (!st.near) throw new Error("register on the NEAR policy first (step 2)");
-      if (st.executor.registered) return setMsg("Passkey already registered on Monad.");
+      if (!st.near) throw new Error(t("setup.needNearFirst"));
+      if (st.executor.registered) return setMsg(t("setup.alreadyRegistered"));
       const { x, y } = s.passkey!;
       const account = accountOf(s);
       const cap = BigInt(st.near.weekly_cap) < 5_000_000n ? BigInt(st.near.weekly_cap) : 5_000_000n;
@@ -79,55 +88,62 @@ export default function SetupPage() {
         cfg: cfg(), policy, account, chain: "monad-testnet", planId, to: MONAD_TESTNET.planExecutor,
         data: encodeFunctionData({ abi: planExecutorAbi, functionName: "registerPasskey", args: [x, y, cap] }),
       });
-      setMsg(`Passkey registered on Monad: ${r.explorer}`);
+      setMsg(`${t("setup.registeredOk")} ${r.explorer}`);
       setState(await readState(cfg(), policy, account));
     });
 
   return (
     <>
-      <Card title="1 · Your NEAR testnet account">
+      <Card title={t("setup.nearTitle")} info="nearAccount">
         <div className="flex flex-wrap gap-2">
           <input
             value={user}
             onChange={(e) => setUser(e.target.value.trim())}
-            placeholder="yourname.testnet"
+            placeholder={t("setup.placeholder")}
             className="min-w-60 flex-1 rounded-lg border border-white/10 bg-black/40 px-3 py-2 text-sm"
           />
-          <Button onClick={() => user.endsWith(".testnet") && setS(saveSetup({ nearUser: user }))} disabled={!user.endsWith(".testnet")}>
-            Save
-          </Button>
+          <Action info="saveAccount">
+            <Button onClick={() => user.endsWith(".testnet") && setS(saveSetup({ nearUser: user }))} disabled={!user.endsWith(".testnet")}>
+              {t("setup.save")}
+            </Button>
+          </Action>
         </div>
         {derived && (
-          <p className="text-xs text-gray-300">
-            Your EVM address, derived by NEAR Chain Signatures from the policy contract (same on Base Sepolia and Monad): <Mono>{derived}</Mono>
+          <p className="flex flex-wrap items-start gap-1 text-xs text-gray-300">
+            <span>
+              {t("setup.derived")} <Mono>{derived}</Mono>
+            </span>
+            <InfoTip k="derivedAddress" />
           </p>
         )}
       </Card>
 
       {s.nearUser && (
-        <Card title="2 · Device key + NEAR policy (run once in a terminal with near-cli-rs)">
+        <Card title={t("setup.policyTitle")} info="nearCommands">
           {!s.fcKey ? (
-            <Button
-              onClick={() => {
-                const kp = KeyPair.fromRandom("ed25519");
-                setS(saveSetup({ fcKey: kp.toString(), fcPublicKey: kp.getPublicKey().toString() }));
-              }}
-            >
-              Generate this device&apos;s key
-            </Button>
+            <Action info="deviceKey">
+              <Button
+                onClick={() => {
+                  const kp = KeyPair.fromRandom("ed25519");
+                  setS(saveSetup({ fcKey: kp.toString(), fcPublicKey: kp.getPublicKey().toString() }));
+                }}
+              >
+                {t("setup.generateKey")}
+              </Button>
+            </Action>
           ) : (
             <>
-              <p className="text-xs text-gray-400">
-                The private key never leaves this device. It can only call commit_plan / cancel_plan / request_signature on {POLICY}: it cannot raise caps, add recipients or move funds.
-              </p>
+              <p className="text-xs text-gray-400">{t("setup.keyStay", { policy: POLICY })}</p>
               {cli(s.nearUser, s.fcPublicKey!, derived!).map((c) => (
                 <pre key={c} className="overflow-x-auto whitespace-pre-wrap rounded-lg bg-black/50 p-3 text-xs text-gray-200">
                   {c}
                 </pre>
               ))}
-              <Button kind="ghost" onClick={checkNear} disabled={busy}>
-                Check NEAR setup
-              </Button>
+              <Action info="checkNear">
+                <Button kind="ghost" onClick={checkNear} disabled={busy}>
+                  {t("setup.checkNear")}
+                </Button>
+              </Action>
               {nearOk && <p className="text-xs text-emerald-300">{nearOk}</p>}
             </>
           )}
@@ -135,50 +151,58 @@ export default function SetupPage() {
       )}
 
       {s.fcKey && (
-        <Card title="3 · Passkey">
+        <Card title={t("setup.passkeyTitle")} info="createPasskey">
           {s.passkey ? (
             <p className="text-xs text-gray-300">
-              Passkey created on this device. Public key x: <Mono>{s.passkey.x}</Mono>
+              {t("setup.passkeyDone")} <Mono>{s.passkey.x}</Mono>
             </p>
           ) : (
-            <Button
-              onClick={() =>
-                run(async () => {
-                  const p = await createPasskey(s.nearUser!);
-                  setS(saveSetup({ credentialId: p.credentialId, passkey: { x: p.x, y: p.y } }));
-                })
-              }
-              disabled={busy}
-            >
-              Create passkey
-            </Button>
+            <Action info="createPasskey">
+              <Button
+                onClick={() =>
+                  run(async () => {
+                    const p = await createPasskey(s.nearUser!);
+                    setS(saveSetup({ credentialId: p.credentialId, passkey: { x: p.x, y: p.y } }));
+                  })
+                }
+                disabled={busy}
+              >
+                {t("setup.createPasskey")}
+              </Button>
+            </Action>
           )}
         </Card>
       )}
 
       {s.passkey && derived && (
-        <Card title="4 · Test funds for your derived address">
+        <Card title={t("setup.fundsTitle")} info="faucet">
           <p className="text-xs text-gray-300">
-            Send test tokens to <Mono>{derived}</Mono>: MON on Monad (<Ext href={FAUCETS.mon}>faucet</Ext>), USDC on Base Sepolia (
-            <Ext href={FAUCETS.usdc}>Circle faucet</Ext>), a little ETH on Base Sepolia for gas (<Ext href={FAUCETS.baseEth}>CDP faucet</Ext>).
+            {t("setup.fundsLead")} <Mono>{derived}</Mono>: {t("setup.fundsMon")} (
+            <Ext href={FAUCETS.mon}>{t("app.faucet")}</Ext>), {t("setup.fundsUsdc")} (
+            <Ext href={FAUCETS.usdc}>Circle</Ext>), {t("setup.fundsEth")} (
+            <Ext href={FAUCETS.baseEth}>CDP</Ext>).
           </p>
-          <Button kind="ghost" onClick={checkNear} disabled={busy}>
-            Refresh balances
-          </Button>
+          <Action info="refreshBalances">
+            <Button kind="ghost" onClick={checkNear} disabled={busy}>
+              {t("setup.refresh")}
+            </Button>
+          </Action>
           {state && <StatusBar s={state} />}
         </Card>
       )}
 
       {s.passkey && (
-        <Card title="5 · Register the passkey on Monad (PlanExecutor)">
-          <p className="text-xs text-gray-400">One policy-signed transaction from your derived address: from now on Monad verifies your passkey on-chain (P256 precompile).</p>
-          <Button onClick={registerOnMonad} disabled={busy}>
-            Register on Monad
-          </Button>
+        <Card title={t("setup.registerTitle")} info="registerMonad">
+          <p className="text-xs text-gray-400">{t("setup.registerLead")}</p>
+          <Action info="registerMonad">
+            <Button onClick={registerOnMonad} disabled={busy}>
+              {t("setup.register")}
+            </Button>
+          </Action>
         </Card>
       )}
 
-      {busy && <p className="text-sm text-amber-300">Working…</p>}
+      {busy && <p className="text-sm text-amber-300">{t("setup.working")}</p>}
       {msg && <p className="text-sm text-emerald-300">{msg}</p>}
       <Err>{err}</Err>
     </>

@@ -1,25 +1,38 @@
+"use client";
+
 import { fromUnits } from "@intentguard/core";
 import type { ChainState } from "@intentguard/signer";
+import { InfoTip } from "./InfoTip";
+import { useI18n } from "./I18nProvider";
 import { Mono } from "./ui";
 
 const mon = (wei: bigint) => fromUnits(wei, "MON").replace(/(\.\d{4})\d+$/, "$1");
 
 export function StatusBar({ s }: { s: ChainState }) {
-  const nearLeft = s.near ? fromUnits(BigInt(s.near.remaining), "USDC") : "not registered";
+  const { t } = useI18n();
+  const nearLeft = s.near ? fromUnits(BigInt(s.near.remaining), "USDC") : t("status.nearUnregistered");
   return (
     <div className="grid gap-1 rounded-xl border border-white/10 p-3 text-xs text-gray-300 sm:grid-cols-2">
-      <div>
-        Your EVM address (same on Base and Monad): <Mono>{s.account}</Mono>
+      <div className="flex flex-wrap items-start gap-1">
+        <span>
+          {t("status.address")} <Mono>{s.account}</Mono>
+        </span>
+        <InfoTip k="evmAddress" />
+      </div>
+      <div className="flex flex-wrap items-start gap-1">
+        <span>{t("status.weekly", { near: nearLeft, monad: fromUnits(s.executor.remaining, "USDC") })}</span>
+        <InfoTip k="weeklyAllowance" />
+      </div>
+      <div className="flex flex-wrap items-start gap-1">
+        <span>{t("status.base", { usdc: fromUnits(s.balances.baseUsdc, "USDC"), eth: mon(s.balances.baseEth) })}</span>
+        <InfoTip k="balances" />
       </div>
       <div>
-        Weekly allowance left: NEAR policy <b>{nearLeft}</b> · Monad <b>{fromUnits(s.executor.remaining, "USDC")}</b> USDC
-      </div>
-      <div>
-        Base Sepolia: {fromUnits(s.balances.baseUsdc, "USDC")} USDC · {mon(s.balances.baseEth)} ETH
-      </div>
-      <div>
-        Monad: {fromUnits(s.balances.monadUsdc, "USDC")} USDC · {mon(s.balances.monadMon)} MON · passkey{" "}
-        {s.executor.registered ? "registered ✓" : "not registered"}
+        {t("status.monad", {
+          usdc: fromUnits(s.balances.monadUsdc, "USDC"),
+          mon: mon(s.balances.monadMon),
+          passkey: s.executor.registered ? t("status.passkeyYes") : t("status.passkeyNo"),
+        })}
       </div>
     </div>
   );

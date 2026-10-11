@@ -1,210 +1,169 @@
 "use client";
-import Link from "next/link";
-import { useSearchParams } from "next/navigation";
-import { Suspense, useEffect, useState } from "react";
-import { buildPlan, decodeIntentParam, fromUnits, summarizePlan, toUnits, type Intent, type Plan } from "@intentguard/core";
-import { cctpFastMaxFee, planContext, PolicyRejection, readState, runPlan, type ChainState } from "@intentguard/signer";
-import { StatusBar } from "@/components/StatusBar";
-import { Timeline, type Item } from "@/components/Timeline";
-import { Button, Card, Err, Mono } from "@/components/ui";
-import { accountOf, errorText, policyClient } from "@/lib/clients";
-import { cfg, DEMO_COMMAND, FAUCETS } from "@/lib/config";
-import { approvePlan } from "@/lib/passkey";
-import { isReady, loadSetup, type Setup } from "@/lib/store";
 
-export default function Page() {
+import Link from "next/link";
+import { useRouter, useSearchParams } from "next/navigation";
+import { Suspense, useEffect } from "react";
+import { InfoTip } from "@/components/InfoTip";
+import { useI18n } from "@/components/I18nProvider";
+
+export default function LandingPage() {
   return (
     <Suspense fallback={null}>
-      <App />
+      <Landing />
     </Suspense>
   );
 }
 
-function warnings(plan: Plan, s?: ChainState): string[] {
-  if (!s) return [];
-  const w: string[] = [];
-  const bridge = plan.intent.actions.find((a) => a.type === "bridge");
-  if (plan.executorPlan && !s.executor.registered) w.push("Your passkey is not registered on Monad yet: finish Setup (step 5).");
-  if (bridge && toUnits(bridge.amount, "USDC") > s.balances.baseUsdc) w.push(`Not enough USDC on Base Sepolia (faucet: ${FAUCETS.usdc}).`);
-  if (bridge && s.balances.baseEth === 0n) w.push(`No ETH for gas on Base Sepolia (faucet: ${FAUCETS.baseEth}).`);
-  if (s.balances.monadMon < 50_000_000_000_000_000n) w.push(`Low MON for gas on Monad (faucet: ${FAUCETS.mon}).`);
-  return w;
-}
-
-function App() {
+function Landing() {
+  const { t } = useI18n();
   const params = useSearchParams();
-  const [setup, setSetup] = useState<Setup>({});
-  const [state, setState] = useState<ChainState>();
-  const [text, setText] = useState(DEMO_COMMAND);
-  const [fromAgent, setFromAgent] = useState(false);
-  const [planned, setPlanned] = useState<{ plan: Plan; source: string }>();
-  const [items, setItems] = useState<Item[]>([]);
-  const [err, setErr] = useState<string>();
-  const [busy, setBusy] = useState<string>();
-
-  async function refresh(s: Setup) {
-    if (s.nearUser) setState(await readState(cfg(), policyClient(s), accountOf(s)));
-  }
-
-  async function makePlan(s: Setup, intent: Intent, source: string) {
-    setErr(undefined);
-    setPlanned(undefined);
-    setItems([]);
-    setBusy("Reading NEAR, Monad and Base Sepolia…");
-    try {
-      const st = await readState(cfg(), policyClient(s), accountOf(s));
-      setState(st);
-      const bridge = intent.actions.find((a) => a.type === "bridge");
-      const fee = bridge ? await cctpFastMaxFee(cfg().irisApi, toUnits(bridge.amount, "USDC")) : undefined;
-      setPlanned({ plan: buildPlan(intent, planContext(st, { cctpMaxFee: fee })), source });
-    } catch (e) {
-      setErr(errorText(e));
-    } finally {
-      setBusy(undefined);
-    }
-  }
+  const router = useRouter();
+  const intent = params.get("intent");
 
   useEffect(() => {
-    const s = loadSetup();
-    setSetup(s);
-    refresh(s).catch((e) => setErr(errorText(e)));
-    const p = params.get("intent");
-    if (p && s.nearUser) {
-      try {
-        const intent = decodeIntentParam(p);
-        setFromAgent(true);
-        setText(intent.rawText || "(structured intent proposed by an AI agent)");
-        void makePlan(s, intent, "agent");
-      } catch (e) {
-        setErr(`Invalid approval link: ${errorText(e)}`);
-      }
-    }
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
+    if (intent) router.replace(`/app?intent=${encodeURIComponent(intent)}`);
+  }, [intent, router]);
 
-  async function onPlan() {
-    setErr(undefined);
-    setFromAgent(false);
-    setBusy("Understanding the command…");
-    const res = await fetch("/api/parse", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ text }) });
-    const j = (await res.json()) as { intent?: Intent; source?: string; error?: string };
-    if (!res.ok || !j.intent) {
-      setErr(j.error ?? "could not understand the command");
-      setBusy(undefined);
-      return;
-    }
-    await makePlan(setup, j.intent, j.source ?? "rules");
+  if (intent) {
+    return <p className="text-sm text-gray-400">{t("landing.redirectApprove")}</p>;
   }
 
-  async function onApprove() {
-    if (!planned || !setup.credentialId) return;
-    const { plan } = planned;
-    setErr(undefined);
-    setItems([
-      { label: "Commit the plan on the NEAR policy contract", chain: "near", status: "pending" },
-      ...plan.steps.map((s) => ({ label: s.label, chain: s.chain, status: "pending" as const })),
-    ]);
-    try {
-      setBusy("Approve with your passkey (fingerprint / face / PIN)…");
-      const auth = await approvePlan(setup.credentialId, plan.planId); // one approval for the whole plan
-      setBusy("Executing: every signature goes through the NEAR policy, one tx at a time…");
-      await runPlan({
-        cfg: cfg(),
-        policy: policyClient(setup),
-        plan,
-        account: accountOf(setup),
-        auth: plan.executorPlan ? auth : undefined,
-        iris: cfg().irisApi,
-        events: {
-          onStep: (i, status, info) =>
-            setItems((prev) =>
-              prev.map((it, k) =>
-                k === i + 1
-                  ? { ...it, status, explorer: info?.explorer ?? it.explorer, nearExplorer: info?.nearExplorer ?? it.nearExplorer, note: info?.note, error: info?.error }
-                  : it,
-              ),
-            ),
-        },
-      });
-      await refresh(setup);
-    } catch (e) {
-      setErr(e instanceof PolicyRejection ? `Rejected by the NEAR policy: ${e.reason}` : errorText(e));
-    } finally {
-      setBusy(undefined);
-    }
-  }
-
-  if (!isReady(setup)) {
-    return (
-      <Card title="Welcome to IntentGuard">
-        <p className="text-sm text-gray-300">
-          AI agents propose, you approve once with a passkey, and two chains refuse everything outside your plan.
-        </p>
-        <Link href="/setup" className="inline-block rounded-lg bg-emerald-500 px-4 py-2 text-sm font-medium text-black">
-          Set up this device
-        </Link>
-      </Card>
-    );
-  }
-
-  const w = planned ? warnings(planned.plan, state) : [];
   return (
-    <>
-      {state && <StatusBar s={state} />}
-      <Card title="What should your agent do?">
-        <textarea
-          value={text}
-          onChange={(e) => setText(e.target.value)}
-          rows={3}
-          className="w-full rounded-lg border border-white/10 bg-black/40 p-3 text-sm"
-        />
-        <div className="flex flex-wrap gap-2">
-          <Button onClick={onPlan} disabled={!!busy}>
-            Plan it
-          </Button>
-          <Button kind="ghost" onClick={() => setText(DEMO_COMMAND)} disabled={!!busy}>
-            Demo command
-          </Button>
+    <div className="landing-hero -mx-4 space-y-10 px-4 sm:space-y-12">
+      <section className="space-y-4 pt-2 sm:pt-6">
+        <p className="text-xs font-medium uppercase tracking-[0.18em] text-emerald-400">{t("landing.kicker")}</p>
+        <h1 className="text-4xl font-semibold tracking-tight text-white sm:text-6xl">
+          {t("landing.titleBefore")}
+          <span className="text-emerald-400">{t("landing.titleAccent")}</span>
+        </h1>
+        <p className="max-w-2xl text-lg text-gray-100 sm:text-xl">{t("landing.tagline")}</p>
+        <p className="max-w-2xl text-sm leading-relaxed text-gray-400 sm:text-base">{t("landing.lead")}</p>
+        <div className="flex flex-wrap gap-3 pt-1">
+          <Link
+            href="/app"
+            className="inline-flex rounded-lg bg-emerald-500 px-5 py-2.5 text-sm font-medium text-black hover:bg-emerald-400"
+          >
+            {t("landing.cta")}
+          </Link>
+          <Link
+            href="/setup"
+            className="inline-flex rounded-lg border border-white/20 px-5 py-2.5 text-sm font-medium text-gray-100 hover:bg-white/10"
+          >
+            {t("landing.ctaSetup")}
+          </Link>
+          <a
+            href="#how"
+            className="inline-flex rounded-lg px-3 py-2.5 text-sm text-emerald-300 underline-offset-4 hover:underline"
+          >
+            {t("landing.ctaHow")}
+          </a>
         </div>
-      </Card>
+      </section>
 
-      {busy && <p className="text-sm text-amber-300">{busy}</p>}
-      <Err>{err}</Err>
+      <section className="space-y-4">
+        <h2 className="text-2xl font-semibold text-white">{t("landing.problemTitle")}</h2>
+        <p className="max-w-2xl text-sm leading-relaxed text-gray-400">{t("landing.problemLead")}</p>
+        <div className="grid gap-3 sm:grid-cols-3">
+          <ProblemCard title={t("landing.problem1Title")} body={t("landing.problem1Body")} />
+          <ProblemCard title={t("landing.problem2Title")} body={t("landing.problem2Body")} />
+          <ProblemCard title={t("landing.problem3Title")} body={t("landing.problem3Body")} />
+        </div>
+      </section>
 
-      {planned && (
-        <Card title={fromAgent ? "Plan proposed by an AI agent" : "Your plan"} tone="ok">
-          <p className="text-xs text-gray-400">
-            Understood by: {planned.source === "llm" ? "LLM (schema-validated)" : planned.source === "agent" ? "external agent (re-validated here)" : "deterministic parser"} · checked against your on-chain limits
-          </p>
-          <ul className="space-y-1 text-sm">
-            {summarizePlan(planned.plan).map((l) => (
-              <li key={l}>{l}</li>
-            ))}
-          </ul>
-          <div className="text-xs text-gray-400">
-            Passkey challenge (plan hash): <Mono>{planned.plan.planId}</Mono>
-          </div>
-          {planned.plan.weeklyCap !== undefined && state?.near && BigInt(state.near.weekly_cap) !== planned.plan.weeklyCap && (
-            <p className="text-xs text-amber-300">
-              Your on-chain weekly cap is {fromUnits(BigInt(state.near.weekly_cap), "USDC")} USDC; changing it needs your full-access NEAR key (see Setup).
-            </p>
-          )}
-          {w.map((x) => (
-            <p key={x} className="text-xs text-amber-300">
-              ⚠ {x}
-            </p>
+      <section id="how" className="scroll-mt-6 space-y-4">
+        <h2 className="text-2xl font-semibold text-white">{t("landing.howTitle")}</h2>
+        <p className="max-w-2xl text-sm leading-relaxed text-gray-400">{t("landing.howLead")}</p>
+        <div className="grid gap-3 lg:grid-cols-3">
+          <LayerCard
+            featured
+            kicker={t("landing.monadKicker")}
+            title={t("landing.monadTitle")}
+            body={t("landing.monadBody")}
+          />
+          <LayerCard kicker={t("landing.nearKicker")} title={t("landing.nearTitle")} body={t("landing.nearBody")} />
+          <LayerCard kicker={t("landing.cctpKicker")} title={t("landing.cctpTitle")} body={t("landing.cctpBody")} />
+        </div>
+      </section>
+
+      <section className="space-y-4">
+        <h2 className="text-2xl font-semibold text-white">{t("landing.stepsTitle")}</h2>
+        <p className="max-w-2xl text-sm leading-relaxed text-gray-400">{t("landing.stepsLead")}</p>
+        <ol className="grid gap-3 sm:grid-cols-2">
+          {[1, 2, 3, 4, 5].map((n) => (
+            <li key={n} className="rounded-xl border border-white/10 bg-white/[0.03] p-4">
+              <div className="mb-2 inline-flex h-7 w-7 items-center justify-center rounded-full bg-emerald-500/15 text-sm font-semibold text-emerald-400">
+                {n}
+              </div>
+              <h3 className="font-medium text-white">{t(`landing.step${n}Title`)}</h3>
+              <p className="mt-1 text-sm text-gray-400">{t(`landing.step${n}Body`)}</p>
+            </li>
           ))}
-          <Button onClick={onApprove} disabled={!!busy || items.length > 0}>
-            Approve with passkey
-          </Button>
-        </Card>
-      )}
+        </ol>
+      </section>
 
-      {items.length > 0 && (
-        <Card title="Execution">
-          <Timeline items={items} />
-        </Card>
-      )}
-    </>
+      <section className="rounded-xl border border-amber-500/40 bg-amber-500/10 p-4 sm:p-5">
+        <div className="flex flex-wrap items-center gap-1.5">
+          <h2 className="text-lg font-semibold text-amber-200">{t("landing.disclaimerTitle")}</h2>
+          <InfoTip k="testnet" />
+        </div>
+        <p className="mt-2 text-sm leading-relaxed text-amber-100/80">{t("landing.disclaimerBody")}</p>
+      </section>
+
+      <section className="rounded-xl border border-emerald-500/50 bg-emerald-500/10 p-5 sm:p-6">
+        <h2 className="text-xl font-semibold text-white">{t("landing.finalCtaTitle")}</h2>
+        <p className="mt-2 max-w-2xl text-sm text-gray-300">{t("landing.finalCtaBody")}</p>
+        <div className="mt-4 flex flex-wrap gap-3">
+          <Link
+            href="/app"
+            className="inline-flex rounded-lg bg-emerald-500 px-5 py-2.5 text-sm font-medium text-black hover:bg-emerald-400"
+          >
+            {t("landing.finalCtaApp")}
+          </Link>
+          <Link
+            href="/attack"
+            className="inline-flex rounded-lg border border-white/20 px-5 py-2.5 text-sm font-medium text-gray-100 hover:bg-white/10"
+          >
+            {t("landing.finalCtaAttack")}
+          </Link>
+        </div>
+      </section>
+    </div>
+  );
+}
+
+function ProblemCard({ title, body }: { title: string; body: string }) {
+  return (
+    <article className="rounded-xl border border-white/10 bg-white/[0.03] p-4">
+      <h3 className="font-medium text-white">{title}</h3>
+      <p className="mt-2 text-sm leading-relaxed text-gray-400">{body}</p>
+    </article>
+  );
+}
+
+function LayerCard({
+  kicker,
+  title,
+  body,
+  featured,
+}: {
+  kicker: string;
+  title: string;
+  body: string;
+  featured?: boolean;
+}) {
+  return (
+    <article
+      className={`rounded-xl border p-4 ${
+        featured
+          ? "border-emerald-400 bg-emerald-500/10 shadow-[0_0_32px_rgba(16,185,129,0.12)]"
+          : "border-white/10 bg-white/[0.03]"
+      }`}
+    >
+      <p className={`text-xs font-medium uppercase tracking-wide ${featured ? "text-emerald-300" : "text-gray-500"}`}>
+        {kicker}
+      </p>
+      <h3 className="mt-2 font-semibold text-white">{title}</h3>
+      <p className="mt-2 text-sm leading-relaxed text-gray-300">{body}</p>
+    </article>
   );
 }

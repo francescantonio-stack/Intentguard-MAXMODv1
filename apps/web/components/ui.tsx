@@ -1,25 +1,75 @@
-import type { ReactNode } from "react";
+"use client";
 
-export function Card({ title, children, tone }: { title?: ReactNode; children: ReactNode; tone?: "danger" | "ok" }) {
+import type { ReactNode } from "react";
+import type { InfoKey } from "@/lib/i18n";
+import { InfoTip } from "./InfoTip";
+
+export function Card({
+  title,
+  info,
+  children,
+  tone,
+}: {
+  title?: ReactNode;
+  info?: InfoKey;
+  children: ReactNode;
+  tone?: "danger" | "ok";
+}) {
   const border = tone === "danger" ? "border-red-500/60" : tone === "ok" ? "border-emerald-500/60" : "border-white/10";
   return (
     <section className={`rounded-xl border ${border} bg-white/[0.03] p-4 space-y-3`}>
-      {title && <h2 className="font-semibold text-white">{title}</h2>}
+      {(title || info) && (
+        <div className="flex flex-wrap items-center gap-1.5">
+          {title && <h2 className="font-semibold text-white">{title}</h2>}
+          {info && <InfoTip k={info} />}
+        </div>
+      )}
       {children}
     </section>
   );
 }
 
-export function Button({ children, onClick, disabled, kind = "primary" }: { children: ReactNode; onClick?: () => void; disabled?: boolean; kind?: "primary" | "ghost" | "danger" }) {
+export function Button({
+  children,
+  onClick,
+  disabled,
+  kind = "primary",
+}: {
+  children: ReactNode;
+  onClick?: () => void;
+  disabled?: boolean;
+  kind?: "primary" | "ghost" | "danger";
+}) {
   const styles = {
     primary: "bg-emerald-500 text-black hover:bg-emerald-400",
     ghost: "border border-white/20 hover:bg-white/10",
     danger: "bg-red-500 text-white hover:bg-red-400",
   }[kind];
   return (
-    <button onClick={onClick} disabled={disabled} className={`rounded-lg px-4 py-2 text-sm font-medium disabled:opacity-40 ${styles}`}>
+    <button
+      type="button"
+      onClick={onClick}
+      disabled={disabled}
+      className={`rounded-lg px-4 py-2 text-sm font-medium disabled:opacity-40 ${styles}`}
+    >
       {children}
     </button>
+  );
+}
+
+/** Primary/ghost/danger action plus an accessible info control. */
+export function Action({
+  info,
+  children,
+}: {
+  info: InfoKey;
+  children: ReactNode;
+}) {
+  return (
+    <div className="inline-flex items-center gap-1">
+      {children}
+      <InfoTip k={info} />
+    </div>
   );
 }
 
