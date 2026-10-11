@@ -1,4 +1,5 @@
 export const dynamic = "force-dynamic";
+export const maxDuration = 60;
 
 const IRIS = process.env.CIRCLE_IRIS_API_URL || "https://iris-api-sandbox.circle.com";
 const ALLOWED = [/^v2\/burn\/USDC\/fees\/\d+\/\d+$/, /^v2\/messages\/\d+$/];

@@ -1,4 +1,5 @@
 export const dynamic = "force-dynamic";
+export const maxDuration = 60;
 
 // Same-origin JSON-RPC passthrough to fixed public TESTNET endpoints (never mainnet, never user-supplied URLs).
 const UPSTREAM: Record<string, string | undefined> = {

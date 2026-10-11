@@ -13,12 +13,19 @@ Facoltativo: variabile `AGENT_CLAUDE_ARGS` (es. un modello diverso per gli agent
 
 ## 2. Vercel: la PWA (Project → Settings → Environment Variables)
 
-| Variabile | Da dove | Obbligatoria? |
-|---|---|---|
-| `GEMINI_API_KEY` | aistudio.google.com → Get API key (gratis, senza carta; restringila alla Gemini API) | no: senza chiave l'app usa il parser deterministico |
-| `GROQ_API_KEY` | console.groq.com (riserva) | no |
+Import del progetto (una volta): New Project → importa il repo → **Framework Next.js**, **Root Directory `apps/web`**, **Node 22.x**. Install/build sono già in `apps/web/vercel.json` (`pnpm install --frozen-lockfile --filter @intentguard/web...` / `pnpm build`). Elenco completo e default testnet: [`.env.example`](../.env.example). Sezioni README: [EN](../README.md#deploy-on-vercel) · [IT](../README.it.md#deploy-della-pwa-su-vercel).
 
-Import del progetto su Vercel (una volta): New Project → importa `francescantonio-stack/Intentguard` → **Root Directory `apps/web`** → Deploy. Vercel riconosce pnpm e Next.js da solo.
+| Variabile | Dove | Da dove | Obbligatoria? |
+|---|---|---|---|
+| `NEXT_PUBLIC_POLICY_CONTRACT_ID` | Pubblica | default `intentguard-973f6c.testnet` | no |
+| `NEXT_PUBLIC_RP_ID` | Pubblica | lascia vuoto (usa l'host della pagina) | no |
+| `NEXT_PUBLIC_APP_URL` | Pubblica | solo se hai un dominio custom | no |
+| `GEMINI_API_KEY` | Solo server | aistudio.google.com → Get API key (gratis, senza carta; restringila alla Gemini API) | no: senza chiave l'app usa il parser deterministico |
+| `GROQ_API_KEY` | Solo server | console.groq.com (riserva) | no |
+| `LLM_PROVIDER` | Solo server | `rules` / `gemini` / `groq` | no |
+| `MONAD_RPC_URL` / `BASE_SEPOLIA_RPC_URL` / `NEAR_RPC_URL` / `CIRCLE_IRIS_API_URL` | Solo server | default testnet in `.env.example` | no |
+
+Nessuna chiave privata (`NEAR_PRIVATE_KEY`, `DEPLOYER_*`) e nessun segreto in `NEXT_PUBLIC_*`.
 
 ## 3. Sul telefono: la tua passkey e il tuo account
 

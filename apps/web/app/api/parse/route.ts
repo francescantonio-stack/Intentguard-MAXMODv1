@@ -2,6 +2,7 @@ import { parseIntent, ParseError } from "@intentguard/core";
 import { llmFromEnv } from "@/lib/llm";
 
 export const dynamic = "force-dynamic";
+export const maxDuration = 60;
 
 /** Natural language -> validated intent. LLM if configured, deterministic rules otherwise (or as fallback). */
 export async function POST(req: Request) {

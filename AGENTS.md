@@ -33,6 +33,8 @@ If a test count changes, update README.md, README.it.md, docs/submission.md and 
 ## Next steps (deadline: 13 Oct 2026)
 1. Deploy the PWA (`apps/web`) on Vercel: import the repo, Root Directory `apps/web`, env vars from `.env.example`
    (LLM key optional: the rules parser is the fallback). HTTPS is required for real passkeys.
+   The repo is deploy-ready (`apps/web/vercel.json`, monorepo tracing, rpId from the request host). The Vercel
+   account connection is still a manual step.
 2. One full run from the PWA with a real phone passkey (M4/M5 in `docs/CLAUDE.md`).
 3. Record the 2-minute video following `docs/submission.md` ("Demo video").
 4. Submit on the platform: team, Track 04, bounties (Mera, Aurora Intents, MetaMask), repo, video, deck, CI link.
