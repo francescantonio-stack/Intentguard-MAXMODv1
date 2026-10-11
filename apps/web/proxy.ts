@@ -7,7 +7,7 @@ function fromRequest(req: NextRequest): Locale {
   return localeFromNavigator(req.headers.get("accept-language") ?? "en");
 }
 
-export function middleware(req: NextRequest) {
+export function proxy(req: NextRequest) {
   const locale = fromRequest(req);
   const headers = new Headers(req.headers);
   headers.set("x-intentguard-locale", locale);

@@ -32,21 +32,23 @@ function Shell({ children }: { children: ReactNode }) {
   return (
     <>
       <header className="border-b border-white/10">
-        <nav className="mx-auto flex max-w-5xl flex-wrap items-center gap-3 px-4 py-3 text-sm">
+        <nav className="mx-auto flex max-w-5xl flex-wrap items-center gap-x-3 gap-y-2 px-4 py-3 text-sm">
           <Link href="/" className="font-semibold text-emerald-400 hover:text-emerald-300">
             IntentGuard
           </Link>
-          {NAV.map(([href, key]) => (
-            <Link
-              key={href}
-              href={href}
-              className={`hover:text-white ${pathname === href ? "text-white" : "text-gray-300"}`}
-              aria-current={pathname === href ? "page" : undefined}
-            >
-              {t(key)}
-            </Link>
-          ))}
-          <div className="ml-auto flex flex-wrap items-center gap-2">
+          <div className="order-last flex w-full flex-wrap gap-x-3 gap-y-1 sm:order-none sm:w-auto">
+            {NAV.map(([href, key]) => (
+              <Link
+                key={href}
+                href={href}
+                className={`hover:text-white ${pathname === href ? "text-white" : "text-gray-300"}`}
+                aria-current={pathname === href ? "page" : undefined}
+              >
+                {t(key)}
+              </Link>
+            ))}
+          </div>
+          <div className="ml-auto flex items-center gap-2">
             <LangSwitch />
             <span className="inline-flex items-center gap-1">
               <span className="rounded bg-amber-500/15 px-2 py-0.5 text-xs text-amber-300">{t("nav.testnet")}</span>
