@@ -14,7 +14,7 @@ An AI agent proposes a plan. The user approves it once with a device passkey (We
 | Passkey check cost | **10,450 gas** per `WebAuthn.verify` with the P256 precompile ([`MonadGas.t.sol`](contracts/evm/test/MonadGas.t.sol)) |
 | Passkey-verified execution | [`0x4c0501ea…`](https://testnet.monadexplorer.com/tx/0x4c0501ea37f917411543aab82536235a5a7fb6c2ecbba4339499a5919852585d): half swapped to native MON, half deposited into the vault |
 
-**Contents:** [Why Monad](#why-monad) · [Architecture](#architecture) · [Deployed on Monad testnet](#deployed-on-monad-testnet) · [Run the tests locally](#run-the-tests-locally) · [Attacks blocked](#attacks-blocked-on-chain) · [Integration guide](#integration-guide-for-third-party-agents-and-wallets) · [Reference app](#reference-app-pwa) · [Deploy on Vercel](#deploy-on-vercel) · [Security model](#security-model)
+**Contents:** [Why Monad](#why-monad) · [Architecture](#architecture) · [Deployed on Monad testnet](#deployed-on-monad-testnet) · [Run the tests locally](#run-the-tests-locally) · [Attacks blocked](#attacks-blocked-on-chain) · [Integration guide](#integration-guide-for-third-party-agents-and-wallets) · [Reference app](#reference-app-pwa) · [Deploy on Vercel](#deploy-on-vercel) · [Security model](#security-model) · [Roadmap](#roadmap)
 
 ---
 
@@ -343,7 +343,39 @@ Known limits:
 - **Aurora Intents, any-chain liquidity to Monad.** Real CCTP V2 into Monad, gated by intent plans. A NEAR Intents 1Click route is the mainnet path; 1Click has no testnet.
 - **MetaMask Agent Wallet Plugin.** The 5-call integration and the MCP server give agents a plan → passkey → policy-gated signing flow. A MetaMask Snap wrapper is not built yet.
 
-**Next steps:** passkey verification on NEAR as well, a code audit, mainnet on Monad and Base with NEAR Intents 1Click, and a MetaMask Snap wrapper.
+**Also planned (not built):** passkey verification on NEAR as well, a code audit, mainnet on Monad and Base with NEAR Intents 1Click, and a MetaMask Snap wrapper. See [Roadmap](#roadmap).
+
+## Roadmap
+
+**Planned, not built.** Monad stays the enforcement center: a `PlanExecutor` on each new chain still verifies the same device passkey through a cheap P256 precompile. The live demo remains **USDC ↔ MON on Monad testnet**. Extra MiniSwap demo tokens are not on this list: `PlanExecutor` hardcodes USDC/WMON, and the deployed NEAR policy allowlists only those USDC / `execute` / `registerPasskey` targets. Changing that would need a new executor address, new pools, and owner `add_rule` calls — it would replace the live demo, not extend it.
+
+### Multichain execution
+
+Same derived EVM address on every EVM chain via NEAR Chain Signatures path `"<user>,evm,1"`. Each chain gets its own `PlanExecutor`. Supporting layers stay the same: NEAR policy + Chain Signatures, Circle CCTP V2 where USDC exists, testnet first.
+
+**First wave** (cheap P256 precompile + Circle CCTP V2 + a public testnet): **Base, Arbitrum, Unichain**.
+
+**Then:** Ethereum, OP, Linea, World Chain, Ink, Avalanche, Polygon PoS, BNB Chain (no CCTP USDC), Sei (P256 at `0x1011`).
+
+**After the EVM set:** Solana — Ed25519 Chain Signatures and a new executor (not the current `PlanExecutor`).
+
+**NEAR policy upgrade required** before any of this can go live. Today chain ids are hardcoded to Monad testnet (`10143`) and Base Sepolia (`84532`), USDC addresses are set only in `new()`, and rules are single-spender / single-domain. That upgrade needs a `set_usdc` setter and multi-spender / multi-domain rule variants. It is a policy redeploy or owner migration, not a UI change.
+
+### Any-token swaps on mainnet
+
+A DEX aggregator (not more in-house MiniSwap pools) so a plan can sell tokens other than USDC, with:
+
+- **token safety checks** before a route is proposed: honeypot / sell-tax, contract verification, liquidity thresholds;
+- **a price oracle** so per-plan and weekly caps are denominated in **USD**, not USDC only;
+- **allowlisted routers** in the NEAR policy (same allowlist model as today: chain, contract, selector, argument rules).
+
+The live testnet path stays Circle USDC → MiniSwap USDC/WMON → DemoVault. Do not read this section as support for extra tokens in the current PWA.
+
+### On-device planner
+
+A small local model (e.g. Gemma / Qwen 1–4B via llama.cpp or MLC) running **on the phone**, with no cloud API. Small models make more mistakes; IntentGuard is why that is fine: the rules live **outside** the agent — the NEAR policy before any signature exists, and the passkey check on Monad at execution.
+
+Today the planner is a **deterministic rules parser**, plus an optional **server-side** LLM (Gemini / Groq) when a key is set. "No cloud API required" is already true: the demo command works with `LLM_PROVIDER=rules`. On-device AI is planned, not built.
 
 ## Repo layout
 

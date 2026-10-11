@@ -285,6 +285,38 @@ Script riutilizzabile: `node scripts/cctp-base-to-monad.mjs --amount 2 [--standa
 
 **Prezzo dello swap:** MiniSwap ha poca liquidità, quindi lo swap di circa 1 USDC ha reso solo circa 0,055 MON (impatto sul prezzo forte). Prima di una demo pubblica conviene aggiungere liquidità al pool.
 
+## Roadmap
+
+**Pianificato, non costruito.** Monad resta il centro: un `PlanExecutor` su ogni nuova chain verifica ancora la stessa passkey tramite un precompile P256 economico. La demo live resta **USDC ↔ MON su Monad testnet**. Token demo in più su MiniSwap non sono in questa lista: `PlanExecutor` ha USDC/WMON immutabili e la policy NEAR già deployata permette solo quegli indirizzi USDC / `execute` / `registerPasskey`. Cambiarli richiederebbe un nuovo executor, nuovi pool e `add_rule` dell'owner: sostituirebbe la demo live, non la estenderebbe.
+
+### Esecuzione multichain
+
+Stesso indirizzo EVM derivato su ogni chain EVM, path NEAR Chain Signatures `"<user>,evm,1"`. Ogni chain ha il suo `PlanExecutor`. I livelli di supporto restano gli stessi: policy NEAR + Chain Signatures, Circle CCTP V2 dove esiste USDC, prima in testnet.
+
+**Prima ondata** (precompile P256 economico + Circle CCTP V2 + testnet pubblica): **Base, Arbitrum, Unichain**.
+
+**Poi:** Ethereum, OP, Linea, World Chain, Ink, Avalanche, Polygon PoS, BNB Chain (niente USDC CCTP), Sei (P256 a `0x1011`).
+
+**Dopo il set EVM:** Solana — Chain Signatures Ed25519 e un executor nuovo (non il `PlanExecutor` attuale).
+
+**Serve un upgrade della policy NEAR** prima che qualsiasi di questo vada in live. Oggi gli id di chain sono fissi (Monad testnet `10143` e Base Sepolia `84532`), gli indirizzi USDC si impostano solo in `new()`, e le regole sono single-spender / single-domain. L'upgrade richiede un setter `set_usdc` e varianti multi-spender / multi-domain. È un redeploy o una migrazione owner, non un cambio di UI.
+
+### Swap di qualsiasi token in mainnet
+
+Un aggregatore DEX (non altri pool MiniSwap nostri) così un piano può vendere token diversi da USDC, con:
+
+- **controlli di sicurezza sul token** prima di proporre una route: honeypot / tassa di vendita, contratto verificato, soglie di liquidità;
+- **un oracolo di prezzo** così tetto per piano e tetto settimanale sono in **USD**, non solo in USDC;
+- **router in allowlist** sulla policy NEAR (stesso modello di oggi: chain, contratto, selettore, regole sugli argomenti).
+
+Il percorso testnet live resta Circle USDC → MiniSwap USDC/WMON → DemoVault. Questa sezione non è supporto per altri token nella PWA attuale.
+
+### Planner on-device
+
+Un modello locale piccolo (es. Gemma / Qwen 1–4B via llama.cpp o MLC) **sul telefono**, senza API cloud. I modelli piccoli sbagliano di più; IntentGuard è il motivo per cui va bene: le regole vivono **fuori** dall'agente — la policy NEAR prima che esista una firma, e il controllo passkey su Monad in esecuzione.
+
+Oggi il planner è un **parser a regole** deterministico, più un LLM **lato server** opzionale (Gemini / Groq) se c'è una chiave. «Nessuna API cloud obbligatoria» è già vero: il comando demo funziona con `LLM_PROVIDER=rules`. L'AI on-device è pianificata, non costruita.
+
 ## AI tools disclosure
 
 Questo progetto è stato costruito con l'aiuto di assistenti AI: **Claude Code** (Anthropic) e **Grok Bot**. Li abbiamo usati per scrivere il codice, i test, gli script e la documentazione, e per eseguire deploy e verifiche su testnet. Le decisioni di progetto e l'approvazione di ogni passo sono del team (Dominiumchain). Tutto il codice è stato eseguito e testato: i risultati sono riportati sopra.
