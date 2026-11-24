@@ -13,7 +13,11 @@ import type { QueueEvent } from "./events";
 export type QueueStatus = "auto" | "pending" | "approved" | "rejected" | "expired" | "consumed";
 
 /** Queue block reasons, aligned with ActionBlocked(planId, reason, amount). Local to the queue; shared vocabulary lives in events.ts. */
-export type QueueBlockReason = "NotInQueue" | "Pending" | "Consumed" | "Expired" | "Rejected" | "AmountMismatch" | "MissingAmount" | "BadNow" | "BadInput" | "BadAmount" | "BadPlanId" | "BadToken" | "Replay";
+export type QueueBlockReason = "NotInQueue" | "Pending" | "Consumed" | "Expired" | "Rejected" | "AmountMismatch" | "MissingAmount" | "BadNow" | "BadInput" | "BadAmount" | "BadPlanId" | "BadToken" | "Replay" | "BadConfig";
+
+/** Caps fixed by the review: a value too large is a config error, never accepted silently. */
+export const MAX_TTL_MS = 86_400_000; // 24 h
+export const MAX_WINDOW_MS = 604_800_000; // 7 days
 
 
 export interface PaymentRequest {
@@ -37,9 +41,9 @@ export interface QueueItem extends PaymentRequest {
 export interface ApprovalQueueConfig {
   /** Per token: amounts strictly above this need a human. */
   thresholds: Record<string, bigint>;
-  /** Window for summing auto-approvals (anti-splitting) and for keeping closed items. Default 24 h. */
+  /** Window for summing auto-approvals (anti-splitting) and for keeping closed items. Default 24 h, max 7 days. */
   windowMs?: number;
-  /** How long an item (pending, auto or approved) stays valid. Default 1 h (policy plan TTL cap). */
+  /** How long an item (pending, auto or approved) stays valid. Default 1 h, max 24 h. */
   ttlMs?: number;
   /** If set, only these approvers count. */
   approvers?: string[];
@@ -66,31 +70,65 @@ export class ApprovalQueue {
   /** planIds of pruned items -> final status. Kept forever to block replay. */
   private seen = new Map<string, QueueStatus>();
   private seq = 0;
-  private readonly thresholds: Map<string, bigint>;
+  private readonly thresholds = new Map<string, bigint>();
   private readonly approvers?: Set<string>;
-  private readonly windowMs: number;
-  private readonly ttlMs: number;
-  private readonly now: () => number;
+  private readonly windowMs: number = 86_400_000;
+  private readonly ttlMs: number = 3_600_000;
+  private readonly now: () => number = () => Date.now();
   private readonly onEvent?: (e: QueueEvent) => void;
+  /** Bad config: the queue is dead and never authorises anything (fail-closed). */
+  private readonly dead: boolean = false;
   /** time of the current operation (checked once per public call) */
   private t = 0;
   private lastNow = -Infinity;
 
+  /** Never throws: bad config emits one blocked BadConfig event and leaves a dead queue. */
   constructor(cfg: ApprovalQueueConfig) {
-    // only `undefined` takes the default: null or junk is a config error
-    this.windowMs = cfg.windowMs === undefined ? 86_400_000 : cfg.windowMs;
-    this.ttlMs = cfg.ttlMs === undefined ? 3_600_000 : cfg.ttlMs;
-    if (!(Number.isFinite(this.windowMs) && this.windowMs > 0)) throw new Error("windowMs must be > 0");
-    if (!(Number.isFinite(this.ttlMs) && this.ttlMs > 0)) throw new Error("ttlMs must be > 0");
-    this.thresholds = new Map();
-    for (const [k, v] of Object.entries(cfg.thresholds)) {
-      if (typeof v !== "bigint" || v < 0n) throw new Error(`threshold for ${k} must be a non-negative bigint`);
-      this.thresholds.set(k.toUpperCase(), v);
+    const c = (typeof cfg === "object" && cfg !== null ? cfg : {}) as Partial<ApprovalQueueConfig>;
+    let onEvent: unknown;
+    try { onEvent = c.onEvent; } catch { onEvent = null; }
+    if (typeof onEvent === "function") this.onEvent = onEvent as (e: QueueEvent) => void;
+    try {
+      if (typeof cfg !== "object" || cfg === null) throw new Error("cfg");
+      if (onEvent !== undefined && typeof onEvent !== "function") throw new Error("onEvent");
+      // only `undefined` takes the default: null, junk or above the cap is a config error
+      const windowMs = c.windowMs === undefined ? 86_400_000 : c.windowMs;
+      const ttlMs = c.ttlMs === undefined ? 3_600_000 : c.ttlMs;
+      if (!(typeof windowMs === "number" && Number.isFinite(windowMs) && windowMs > 0 && windowMs <= MAX_WINDOW_MS)) throw new Error("windowMs");
+      if (!(typeof ttlMs === "number" && Number.isFinite(ttlMs) && ttlMs > 0 && ttlMs <= MAX_TTL_MS)) throw new Error("ttlMs");
+      const th = c.thresholds;
+      if (typeof th !== "object" || th === null || Array.isArray(th)) throw new Error("thresholds");
+      const thresholds = new Map<string, bigint>();
+      for (const [k, v] of Object.entries(th)) {
+        if (typeof v !== "bigint" || v < 0n) throw new Error("threshold");
+        thresholds.set(k.trim().toUpperCase(), v);
+      }
+      let approvers: Set<string> | undefined;
+      if (c.approvers !== undefined) {
+        if (!Array.isArray(c.approvers) || !c.approvers.every((a) => typeof a === "string")) throw new Error("approvers");
+        approvers = new Set(c.approvers.map((a) => a.toLowerCase()));
+      }
+      if (c.now !== undefined && typeof c.now !== "function") throw new Error("now");
+      this.windowMs = windowMs;
+      this.ttlMs = ttlMs;
+      this.thresholds = thresholds;
+      this.approvers = approvers;
+      if (c.now) this.now = c.now;
+    } catch {
+      this.dead = true;
+      this.emit("blocked", null, 0n, null, "BadConfig");
     }
-    this.approvers = cfg.approvers ? new Set(cfg.approvers.map((a) => a.toLowerCase())) : undefined;
-    if (cfg.now !== undefined && typeof cfg.now !== "function") throw new Error("now must be a function");
-    this.now = cfg.now ?? (() => Date.now());
-    this.onEvent = cfg.onEvent;
+  }
+
+  /** Dead queue: one blocked BadConfig event per call. */
+  private deadBlock(planId: unknown, amount: unknown, id: string | null): boolean {
+    if (!this.dead) return false;
+    this.emit("blocked", planId, amount, id, "BadConfig");
+    return true;
+  }
+
+  private throwIfDead(planId: unknown, amount: unknown, id: string | null): void {
+    if (this.deadBlock(planId, amount, id)) throw new Error("blocked: BadConfig");
   }
 
   private emit(kind: QueueEvent["kind"], planId: unknown, amount: unknown, id: string | null, reason = "") {
@@ -136,6 +174,7 @@ export class ApprovalQueue {
 
   /** Sum of auto-approved amounts for `token` inside the window (live auto + consumed auto). */
   autoSpent(token: string): bigint {
+    this.throwIfDead(null, 0n, null);
     this.tickOrBlock(null, 0n, null);
     return this.autoSpentNow(token);
   }
@@ -151,32 +190,42 @@ export class ApprovalQueue {
     return s;
   }
 
-  submit(req: PaymentRequest): QueueItem {
-    const r = (typeof req === "object" && req !== null ? req : {}) as Partial<PaymentRequest>;
-    // invalid input: one `blocked` event (so the log keeps it), then throw; nothing written
-    const bad = (reason: QueueBlockReason, detail: string): never => {
-      this.emit("blocked", r.planId, r.amount, null, reason);
-      throw new Error(`blocked: ${reason}: ${detail}`);
+  /**
+   * Never throws. Any block (BadConfig, BadInput, BadAmount, BadPlanId, BadToken, BadNow, Replay)
+   * emits exactly one `blocked` event (the log keeps it) and returns null; nothing is written.
+   */
+  submit(req: PaymentRequest): QueueItem | null {
+    let r: Partial<PaymentRequest> = {};
+    let isObj = false;
+    try {
+      isObj = typeof req === "object" && req !== null;
+      if (isObj) r = { ...req }; // one snapshot: getters are read once
+    } catch { isObj = false; r = {}; }
+    const amt: unknown = r.amount;
+    const bad = (reason: QueueBlockReason, planId: unknown = r.planId): null => {
+      this.emit("blocked", planId, amt, null, reason);
+      return null;
     };
-    if (typeof req !== "object" || req === null) return bad("BadInput", "request is not an object");
-    if (typeof r.amount !== "bigint" || r.amount <= 0n) return bad("BadAmount", "amount must be a positive bigint");
+    if (this.dead) return bad("BadConfig");
+    if (!isObj) return bad("BadInput");
+    if (typeof amt !== "bigint" || amt <= 0n) return bad("BadAmount");
     const planId = typeof r.planId === "string" ? r.planId.trim().toLowerCase() : "";
-    if (!PLAN_RE.test(planId)) return bad("BadPlanId", "planId must be 32 bytes hex");
+    if (!PLAN_RE.test(planId)) return bad("BadPlanId");
     const token = typeof r.token === "string" ? r.token.trim().toUpperCase() : "";
-    if (!token) return bad("BadToken", "token required");
-    this.tickOrBlock(planId, req.amount, null); // before ANY write
+    if (!token) return bad("BadToken");
+    if (!this.clock()) return bad("BadNow", planId); // before ANY write
     this.prune();
-    if (this.byPlan.has(planId) || this.seen.has(planId)) return bad("Replay", "plan already submitted");
+    if (this.byPlan.has(planId) || this.seen.has(planId)) return bad("Replay", planId);
     const threshold = this.thresholds.get(token);
     const now = this.t;
     const id = `q${++this.seq}`;
     // Unknown token: no threshold configured -> always a human (fail-closed).
-    const auto = threshold !== undefined && this.autoSpentNow(token) + req.amount <= threshold;
+    const auto = threshold !== undefined && this.autoSpentNow(token) + amt <= threshold;
     const it: QueueItem = {
-      ...req, planId: planId as `0x${string}`, token, id,
+      ...(r as PaymentRequest), amount: amt, planId: planId as `0x${string}`, token, id,
       status: auto ? "auto" : "pending", autoApproved: auto, createdAt: now, expiresAt: now + this.ttlMs,
     };
-    if (!auto) it.reason = threshold === undefined ? "NoThreshold" : req.amount > threshold ? "AboveThreshold" : "WindowTotal";
+    if (!auto) it.reason = threshold === undefined ? "NoThreshold" : amt > threshold ? "AboveThreshold" : "WindowTotal";
     this.items.set(id, it);
     this.byPlan.set(planId, id);
     this.emit(auto ? "auto_approved" : "queued", planId, it.amount, id, it.reason);
@@ -196,6 +245,7 @@ export class ApprovalQueue {
 
   /** Approval is bound to the exact plan: `planId` must match what was queued. */
   approve(id: string, approver: string, planId: string): QueueItem {
+    this.throwIfDead(planId, 0n, typeof id === "string" ? id : null);
     this.tickOrBlock(planId, 0n, typeof id === "string" ? id : null);
     const it = this.live(id);
     const a = this.checkApprover(approver);
@@ -208,6 +258,7 @@ export class ApprovalQueue {
   }
 
   reject(id: string, approver: string, reason = "rejected"): QueueItem {
+    this.throwIfDead(null, 0n, typeof id === "string" ? id : null);
     this.tickOrBlock(this.items.get(id)?.planId ?? null, 0n, typeof id === "string" ? id : null);
     const it = this.live(id);
     const a = this.checkApprover(approver);
@@ -221,6 +272,7 @@ export class ApprovalQueue {
 
   /** True only for an auto-approved or approved, not yet used, not expired plan. */
   canExecute(planId: string): boolean {
+    if (this.deadBlock(planId, 0n, null)) return false;
     const id = this.byPlan.get(String(planId).toLowerCase());
     if (!this.clock()) { this.emit("blocked", planId, 0n, id ?? null, "BadNow"); return false; }
     if (!id) return false;
@@ -237,6 +289,7 @@ export class ApprovalQueue {
       this.emit("blocked", p, amt, itemId, reason);
       throw new Error(`blocked: ${reason}`);
     };
+    if (this.dead) return block("BadConfig", blockAmt, null);
     if (!this.clock()) return block("BadNow", blockAmt, id ?? null);
     if (!id) return block(this.seen.has(p) ? BLOCK_OF[this.seen.get(p)!] : "NotInQueue", blockAmt, null);
     const it = this.live(id);
@@ -249,6 +302,7 @@ export class ApprovalQueue {
   }
 
   pending(): QueueItem[] {
+    this.throwIfDead(null, 0n, null);
     this.tickOrBlock(null, 0n, null);
     return [...this.items.keys()].map((k) => this.live(k)).filter((it) => it.status === "pending").map((it) => ({ ...it }));
   }
