@@ -5,6 +5,7 @@
  * Pure TS: no network, no keys, no signing.
  */
 import type { QueueEvent } from "./events";
+import { asAmount, asFiniteNumber, guardEvent, lowerPlanId, upperToken, ZERO_PLAN } from "./guards";
 
 
 type GuardEvent = QueueEvent;
@@ -20,29 +21,12 @@ export type Receipt = {
 
 export type SkippedEvent = { event: unknown; reason: string };
 
-export const lowerPlanId = (id: string): `0x${string}` => {
-  const s = id.trim();
-  return (s.startsWith("0x") || s.startsWith("0X") ? s : `0x${s}`).toLowerCase() as `0x${string}`;
-};
+const ZERO_HASH = ZERO_PLAN;
+const safePlanId = (id: unknown): `0x${string}` => lowerPlanId(id) ?? ZERO_PLAN;
 
-export const upperToken = (t: string) => t.trim().toUpperCase();
+/** Hard maximum for operator-supplied maxTtlMs/window. null/missing → no cap. Above this → BAD_CONFIG (never clamped). */
+const RECEIPTS_WINDOW_MAX_MS = 7 * 86_400_000; // 7 days
 
-export function asFiniteNumber(v: unknown): number | undefined {
-  if (typeof v === "bigint") {
-    if (v > BigInt(Number.MAX_SAFE_INTEGER) || v < BigInt(Number.MIN_SAFE_INTEGER)) return undefined;
-    return Number(v);
-  }
-  if (typeof v === "number" && Number.isFinite(v)) return v;
-  return undefined;
-}
-
-export function asAmount(v: unknown): bigint | undefined {
-  if (typeof v === "bigint") return v;
-  if (typeof v === "number" && Number.isFinite(v) && Number.isInteger(v)) return BigInt(v);
-  return undefined;
-}
-
-const ZERO_HASH = ("0x" + "00".repeat(32)) as `0x${string}`;
 const PLAN_ID_RE = /^0x[0-9a-f]{64}$/;
 const ADDR40_RE = /^0x[0-9a-f]{40}$/;
 const PAYMENT_KINDS = new Set(["consumed", "executed", "refunded"]);
@@ -65,23 +49,38 @@ export class ReceiptStore {
   }
 
   has(planId: string): boolean {
-    return this.history.has(lowerPlanId(planId));
+    return this.history.has(safePlanId(planId));
   }
 
   get(planId: string): Receipt | undefined {
-    return this.history.get(lowerPlanId(planId));
+    return this.history.get(safePlanId(planId));
   }
 
   add(r: Receipt): boolean {
     const id = lowerPlanId(r.planId);
+    if (!id) return false;
     if (this.history.has(id)) return false;
     this.history.set(id, r);
     return true;
   }
 
+  lookup(planId: unknown, o?: { now?: number }):
+    { ok: true; receipt: Receipt } | { ok: false; reason: string; event: import("./events").QueueEvent } {
+    const now = asFiniteNumber(o?.now) ?? Date.now();
+    const id = lowerPlanId(planId);
+    if (!id) {
+      return { ok: false, reason: "MALFORMED", event: guardEvent({ kind: "blocked", planId: ZERO_HASH, reason: "MALFORMED", amount: 0n, now, id: null }) };
+    }
+    const receipt = this.history.get(id);
+    if (!receipt) {
+      return { ok: false, reason: "Unknown", event: guardEvent({ kind: "blocked", planId: id, reason: "Unknown", amount: 0n, now, id }) };
+    }
+    return { ok: true, receipt };
+  }
+
   /** Drops nothing from history: a remove must not reset the per-id record. */
   remove(planId: string): void {
-    void lowerPlanId(planId);
+    void safePlanId(planId);
   }
 
   get size() { return this.history.size; }
@@ -129,15 +128,15 @@ export function receiptsFromEvents(
   try {
     if ("now" in o && o.now !== undefined) {
       const now = asFiniteNumber(o.now);
-      if (now === undefined || (o.store && !o.store.acceptNow(now))) {
+      if (now == null || (o.store && !o.store.acceptNow(now))) {
         return { receipts: [], skipped: [{ event: o.now, reason: "BAD_NOW" }] };
       }
     } else if (o.store) {
       // no explicit now: do not touch lastNow
     }
-    if ("maxTtlMs" in o && o.maxTtlMs !== undefined) {
+    if ("maxTtlMs" in o && o.maxTtlMs !== undefined && o.maxTtlMs !== null) {
       const cap = asFiniteNumber(o.maxTtlMs);
-      if (cap === undefined || cap <= 0) {
+      if (cap == null || cap <= 0 || cap > RECEIPTS_WINDOW_MAX_MS) {
         return { receipts: [], skipped: [{ event: o.maxTtlMs, reason: "BAD_CONFIG: maxTtlMs" }] };
       }
     }
@@ -173,10 +172,33 @@ export function receiptsFromEvents(
   }
 }
 
+
+/**
+ * Parse an ISO timestamp. Impossible calendar dates (e.g. 2026-02-31, which
+ * Date rolls to 3 March) are rejected: the value is parsed, reformatted with
+ * toISOString(), and must match the input (or the same instant written as …Z
+ * without milliseconds).
+ */
+function parseIsoTs(s: unknown): string | null {
+  if (typeof s !== "string" || !s.trim()) return null;
+  const raw = s.trim();
+  const t = Date.parse(raw);
+  if (!Number.isFinite(t)) return null;
+  const iso = new Date(t).toISOString();
+  if (raw === iso) return raw;
+  if (raw === iso.replace(/\.000Z$/, "Z")) return raw;
+  return null;
+}
+
 function parseReceipt(ev: unknown): { receipt: Receipt } | { skip: string; silent?: boolean } {
   if (!ev || typeof ev !== "object") return { skip: "MALFORMED" };
   const e = ev as LogEvent;
   const kind = typeof e.kind === "string" ? e.kind : "";
+  const looksRefund = (typeof kind === "string" && /refund/i.test(kind)) || e.refundOf !== undefined;
+  // A refund-like kind or an event with refundOf is never skipped silently.
+  if (looksRefund && kind !== "refunded") {
+    return { skip: "unexpected_refund" };
+  }
   if (NO_RECEIPT.has(kind) && kind !== "refunded") return { skip: "no_receipt", silent: true };
   const isRefund = kind === "refunded" || e.refundOf !== undefined;
   if (!PAYMENT_KINDS.has(kind) && !isRefund) {
@@ -186,19 +208,24 @@ function parseReceipt(ev: unknown): { receipt: Receipt } | { skip: string; silen
   }
   if (!isHexPlanId(e.planId)) return { skip: "MALFORMED" };
   const planId = lowerPlanId(e.planId);
+  if (!planId) return { skip: "MALFORMED" };
   const amount = asAmount(e.amount);
-  if (amount === undefined) return { skip: "MALFORMED" };
+  if (amount == null) return { skip: "MALFORMED" };
   const payer = normalizePayer(e.payer);
   if (payer === undefined) return { skip: "MALFORMED" };
   if (typeof e.token !== "string" || !e.token.trim()) return { skip: "MALFORMED" };
   const token = upperToken(e.token);
-  if (typeof e.ts !== "string" || !e.ts) return { skip: "MALFORMED" };
+  if (!token) return { skip: "MALFORMED" };
+  const ts = parseIsoTs(e.ts);
+  if (!ts) return { skip: "MALFORMED" };
   let refundOf: `0x${string}` | undefined;
   if (e.refundOf !== undefined) {
     if (!isHexPlanId(e.refundOf)) return { skip: "MALFORMED" };
-    refundOf = lowerPlanId(e.refundOf as string);
+    const rid = lowerPlanId(e.refundOf);
+    if (!rid) return { skip: "MALFORMED" };
+    refundOf = rid;
   }
-  const receipt: Receipt = { planId, payer, amount, token, ts: e.ts };
+  const receipt: Receipt = { planId, payer, amount, token, ts };
   if (refundOf) receipt.refundOf = refundOf;
   return { receipt };
 }

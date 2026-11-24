@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
-import { receiptsFromEvents, ReceiptStore, asAmount, asFiniteNumber, type Receipt } from "../src/receipts";
-import { blockedEvent } from "../src/events";
+import { receiptsFromEvents, ReceiptStore, type Receipt } from "../src/receipts";
+import { blockedEvent } from "../src/guards";
 
 const PID = ("0x" + "11".repeat(32)) as `0x${string}`;
 const PID2 = ("0x" + "22".repeat(32)) as `0x${string}`;
@@ -80,8 +80,6 @@ describe("ricevute da eventi", () => {
     expect(b.receipts).toEqual([]);
     expect(b.skipped.length).toBe(5);
     expect(b.skipped.every((s) => s.reason === "MALFORMED")).toBe(true);
-    expect(asFiniteNumber("0.1")).toBeUndefined();
-    expect(asAmount(0n)).toBe(0n);
   });
 
   it("ordine deterministico: ts poi planId; planId minuscolo, token maiuscolo, payer address minuscolo", () => {
@@ -135,6 +133,84 @@ describe("lezioni review: orologio, storico, config, blocked", () => {
     const ev = blockedEvent({ planId: PID, reason: "MALFORMED", amount: 7n, ts: TS, id: PID });
     expect(ev).toEqual({ kind: "blocked", planId: PID.toLowerCase(), reason: "MALFORMED", amount: 7n, ts: TS, id: PID });
     expect(typeof ev.amount).toBe("bigint");
+  });
+
+  it("un kind da rimborso o un evento con refundOf non viene saltato in silenzio", () => {
+    const { receipts, skipped } = receiptsFromEvents([
+      { kind: "refund_pending", planId: PID, reason: "Refund", amount: 10n, ts: TS, id: PID, payer: PAYER, token: "USDC", refundOf: ORIG },
+      { kind: "blocked", planId: PID2, reason: "paused", amount: 1n, ts: TS, id: PID2, payer: PAYER, token: "USDC", refundOf: ORIG },
+    ]);
+    expect(receipts).toEqual([]);
+    expect(skipped).toHaveLength(2);
+    expect(skipped.every((s) => s.reason === "unexpected_refund")).toBe(true);
+    expect(skipped.every((s) => s.reason !== "no_receipt")).toBe(true);
+  });
+
+  it("importo negativo è rifiutato e finisce in skipped", () => {
+    const { receipts, skipped } = receiptsFromEvents([
+      consumed({ amount: -1n }),
+    ]);
+    expect(receipts).toEqual([]);
+    expect(skipped).toEqual([{ event: consumed({ amount: -1n }), reason: "MALFORMED" }]);
+  });
+
+  it("maxTtlMs 7 giorni è accettato, 8 giorni dà BAD_CONFIG", () => {
+    const d7 = 7 * 86_400_000;
+    const d8 = 8 * 86_400_000;
+    const ok = receiptsFromEvents([consumed()], { maxTtlMs: d7 });
+    expect(ok.receipts).toHaveLength(1);
+    const over = receiptsFromEvents([consumed()], { maxTtlMs: d8 });
+    expect(over.receipts).toEqual([]);
+    expect(over.skipped[0]?.reason).toBe("BAD_CONFIG: maxTtlMs");
+  });
+
+  it("token con spazi (' usdc ') è USDC", () => {
+    const { receipts } = receiptsFromEvents([consumed({ token: " usdc " })]);
+    expect(receipts[0]?.token).toBe("USDC");
+  });
+
+  it("now 1_000_000 poi 1_005_000 poi 1_000_500: non scrive e dà BAD_NOW", () => {
+    const store = new ReceiptStore();
+    const a = receiptsFromEvents([consumed()], { store, now: 1_000_000 });
+    expect(a.receipts).toHaveLength(1);
+    const b = receiptsFromEvents([consumed({ planId: PID2, ts: TS2 })], { store, now: 1_005_000 });
+    expect(b.receipts).toHaveLength(1);
+    const c = receiptsFromEvents([consumed({ planId: ("0x" + "44".repeat(32)), ts: TS })], { store, now: 1_000_500 });
+    expect(c.receipts).toEqual([]);
+    expect(c.skipped[0]?.reason).toBe("BAD_NOW");
+    expect(store.size).toBe(2);
+  });
+
+  it("lookup di un id sconosciuto o malformato emette blocked e non lancia", () => {
+    const store = new ReceiptStore();
+    const unknown = store.lookup(PID, { now: Date.parse(TS) });
+    expect(unknown.ok).toBe(false);
+    if (!unknown.ok) {
+      expect(unknown.reason).toBe("Unknown");
+      expect(unknown.event.kind).toBe("blocked");
+      expect(unknown.event.planId).toBe(PID.toLowerCase());
+    }
+    const bad = store.lookup("not-a-plan", { now: Date.parse(TS) });
+    expect(bad.ok).toBe(false);
+    if (!bad.ok) {
+      expect(bad.reason).toBe("MALFORMED");
+      expect(bad.event.kind).toBe("blocked");
+      expect(bad.event.planId).toBe("0x" + "00".repeat(32));
+      expect(JSON.stringify(bad.event, (_k, v) => typeof v === "bigint" ? v.toString() : v)).not.toContain("not-a-plan");
+    }
+  });
+
+  it("una data ISO impossibile (2026-02-31) è MALFORMED, una data valida passa", () => {
+    const bad = receiptsFromEvents([consumed({ ts: "2026-02-31T00:00:00.000Z" })]);
+    expect(bad.receipts).toEqual([]);
+    expect(bad.skipped[0]?.reason).toBe("MALFORMED");
+    const rolled = new Date("2026-02-31T00:00:00.000Z").toISOString();
+    expect(rolled).toBe("2026-03-03T00:00:00.000Z");
+    const ok = receiptsFromEvents([consumed({ ts: "2026-11-24T05:35:00.000Z" })]);
+    expect(ok.receipts).toHaveLength(1);
+    expect(ok.receipts[0]?.ts).toBe("2026-11-24T05:35:00.000Z");
+    const noMs = receiptsFromEvents([consumed({ planId: PID2, ts: "2026-11-24T05:35:00Z" })]);
+    expect(noMs.receipts).toHaveLength(1);
   });
 });
 
