@@ -7,14 +7,14 @@
 
 export const isNegZero = (x: unknown): boolean => typeof x === "number" && Object.is(x, -0);
 
-/** Strict number: no strings, bigint, NaN, Inf, -0. */
-export function asFiniteNumber(x: unknown): number | undefined {
+/** Strict number for limits: no strings, bigint, NaN, Inf, -0. Not exported (guards.asFiniteNumber is the shared helper). */
+function asLimitNumber(x: unknown): number | undefined {
   if (typeof x !== "number" || !Number.isFinite(x) || isNegZero(x)) return undefined;
   return x;
 }
 
 export function asPositiveNumber(x: unknown): number | undefined {
-  const n = asFiniteNumber(x);
+  const n = asLimitNumber(x);
   return n !== undefined && n > 0 ? n : undefined;
 }
 
