@@ -2,7 +2,7 @@ import { describe, expect, it } from "vitest";
 import { maxUint256, encodeFunctionData, encodeErrorResult, type Address, type Hex } from "viem";
 import { erc20Abi, planExecutorAbi } from "../src/abi";
 import {
-  decodeTokenEffects, parseCount, revertReason, simSucceeded, simulateTx, toActionBlocked, toSafeHoldInput, toSuccessOddsInput,
+  decodeTokenEffects, parseCount, revertReason, simSucceeded, simulateTx, toActionBlocked, toSafeHoldInput, toSuccessOddsInput, SIM_DEFAULTS,
   type ProposedTx, type SimClient,
 } from "../src/simulate";
 
@@ -219,5 +219,25 @@ describe("fail-closed", () => {
     const pk = "0x" + "cd".repeat(32);
     const out = toSafeHoldInput({ ok: false, chainId: 1, simulatedAt: 1 }, { tokenIn: "USDC", sk: pk, memo: pk });
     expect(out.intent).toEqual({ tokenIn: "USDC", sk: "[redacted]", memo: "[redacted]" });
+  });
+});
+
+describe("config limits", () => {
+  it("rejects a loosened unlimited-approve threshold and invalid config (BadConfig)", async () => {
+    const wide = await simulateTx(tx(), stub({}), { config: { unlimitedApproveMin: SIM_DEFAULTS.unlimitedApproveMin + 1n } });
+    expect(wide.ok).toBe(false);
+    expect(wide.revert?.reason).toMatch(/BadConfig/);
+    expect(toActionBlocked(wide, PLAN)?.reason).toBe("BadConfig");
+    for (const config of [null, "x", { unlimitedApproveMin: 0n }, { unlimitedApproveMin: -1n }, { unlimitedApproveMin: 100 }, { unlimitedApproveMin: "1" }, { unlimitedApproveMin: NaN }] as const) {
+      const r = await simulateTx(tx(), stub({}), { config: config as never });
+      expect(r.ok, String(config)).toBe(false);
+      expect(r.revert?.reason).toMatch(/BadConfig/);
+    }
+  });
+
+  it("accepts a tighter threshold and flags a smaller approve", async () => {
+    const r = await simulateTx(tx({ to: TOKEN, data: approveData(TO, 100n) }), stub({}), { config: { unlimitedApproveMin: 50n } });
+    expect(r.ok).toBe(true);
+    expect(r.warnings.some((w) => w.code === "UNLIMITED_APPROVE")).toBe(true);
   });
 });

@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { looksLikeSecretValue, redactSecrets } from "../src/redact";
+import { looksLikeSecretValue, redactSecrets, redactWithConfig } from "../src/redact";
 
 const PK = "0x" + "ab".repeat(32);
 const MNEMONIC = "abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon about";
@@ -48,5 +48,36 @@ describe("redactSecrets", () => {
     expect(looksLikeSecretValue("Bearer abc")).toBe(true);
     expect(looksLikeSecretValue(MNEMONIC)).toBe(true);
     expect(looksLikeSecretValue("0x534b2f3A21130d7a60830c2Df862319e593943A3")).toBe(false);
+  });
+});
+
+describe("hex keep-list is exact and cannot be widened", () => {
+  const PK = "0x" + "ab".repeat(32);
+  it("keeps only exact plan/tx/block hash fields; redacts key/secret/seed/password/salt/address-64", () => {
+    const out = redactSecrets({
+      planHash: PK, txHash: PK, transactionHash: PK, blockHash: PK, root: PK, merkleRoot: PK, planId: PK,
+      privateKeyId: PK, keyId: PK, secretId: PK, seedHash: PK, mnemonicId: PK, passwordHash: PK, salt: PK, walletAddress: PK,
+      addr: "0x534b2f3A21130d7a60830c2Df862319e593943A3",
+    });
+    for (const k of ["planHash", "txHash", "transactionHash", "blockHash", "root", "merkleRoot", "planId"]) {
+      expect(out[k as keyof typeof out], k).toBe(PK);
+    }
+    for (const k of ["privateKeyId", "keyId", "secretId", "seedHash", "mnemonicId", "passwordHash", "salt", "walletAddress"]) {
+      expect(out[k as keyof typeof out], k).toBe("[redacted]");
+    }
+    expect(out.addr).toBe("0x534b2f3A21130d7a60830c2Df862319e593943A3");
+  });
+
+  it("rejects a config that adds allowKeys (widening) and redacts everything", () => {
+    const bad = redactWithConfig({ planHash: PK, note: "hi" }, { allowKeys: ["planHash", "sk"] });
+    expect(bad.ok).toBe(false);
+    expect(bad.reason).toBe("BadConfig");
+    expect(bad.value).toEqual({ planHash: "[redacted]", note: "[redacted]" });
+  });
+
+  it("accepts a tighter allowKeys subset", () => {
+    const ok = redactWithConfig({ planHash: PK, txHash: PK }, { allowKeys: ["planHash"] });
+    expect(ok.ok).toBe(true);
+    expect(ok.value).toEqual({ planHash: PK, txHash: "[redacted]" });
   });
 });

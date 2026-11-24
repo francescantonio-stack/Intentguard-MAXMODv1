@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { probeNetworks, type JsonRpc, type ProbeNetwork } from "../src/probe";
+import { probeNetworks, PROBE_DEFAULTS, type JsonRpc, type ProbeNetwork } from "../src/probe";
 
 const evm: Record<string, unknown> = {
   eth_chainId: "0x279f", // 10143
@@ -51,5 +51,33 @@ describe("probeNetworks", () => {
     expect(rows[0]?.event?.planId).toBe(rows[0]!.event!.planId.toLowerCase());
     expect(typeof rows[0]?.event?.amount).toBe("bigint");
     expect(rows[1]?.event?.reason).toBe("SimUnavailable");
+  });
+});
+
+describe("config limits", () => {
+  const rpcFor = (net: ProbeNetwork): JsonRpc => async (method) => {
+    if (net.kind === "near") return { chain_id: "testnet", sync_info: { latest_block_height: 1, latest_block_time: new Date().toISOString() } };
+    if (method === "eth_chainId") return net.id === "base-sepolia" ? "0x14a34" : "0x279f";
+    if (method === "eth_blockNumber") return "0x10";
+    if (method === "eth_gasPrice") return "0x1";
+    if (method === "eth_getBlockByNumber") return { timestamp: "0x1" };
+    throw new Error(method);
+  };
+
+  it("blocks a loosened timeout or invalid config (BadConfig) without calling the RPC", async () => {
+    const rows = await probeNetworks({ rpcFor, ids: ["monad-testnet"], config: { timeoutMs: PROBE_DEFAULTS.timeoutMs + 1 } });
+    expect(rows[0]?.ok).toBe(false);
+    expect(rows[0]?.event?.reason).toBe("BadConfig");
+    expect(rows[0]?.error).toMatch(/BadConfig/);
+    for (const config of [null, { timeoutMs: NaN }, { timeoutMs: 0 }, { timeoutMs: Infinity }, { timeoutMs: "1000" }, { timeoutMs: -0 }] as const) {
+      const r = await probeNetworks({ rpcFor, ids: ["monad-testnet"], config: config as never });
+      expect(r[0]?.ok, String(config)).toBe(false);
+      expect(r[0]?.event?.reason).toBe("BadConfig");
+    }
+  });
+
+  it("accepts a tighter timeout and still probes with a mock RPC", async () => {
+    const rows = await probeNetworks({ rpcFor, ids: ["monad-testnet"], config: { timeoutMs: 1_000 } });
+    expect(rows[0]?.ok).toBe(true);
   });
 });

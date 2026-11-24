@@ -5,6 +5,7 @@ import {
 import { erc20Abi, planExecutorAbi } from "./abi";
 import { redactSecrets } from "./redact";
 import { blockedEvent, normalizeAddress, normalizePlanId, type QueueEvent } from "./events";
+import { tightenBigint } from "./limits";
 
 /**
  * Pre-sign simulation (idea: MonadLens). READ-ONLY: eth_call + eth_estimateGas + eth_getBalance.
@@ -19,6 +20,15 @@ import { blockedEvent, normalizeAddress, normalizePlanId, type QueueEvent } from
 export type Sourced<T> = { value: T; source: string };
 
 export type ProposedTx = { chainId: number; from: Address; to: Address; data?: Hex; value?: bigint };
+
+/** Default threshold for the unlimited-approve warning. Input may only lower it. */
+export const SIM_DEFAULTS = { unlimitedApproveMin: maxUint256 / 2n } as const;
+
+export type SimOptions = {
+  rpcLabel?: string;
+  now?: number;
+  config?: { unlimitedApproveMin?: unknown };
+};
 
 /** Minimal JSON-RPC surface: a viem PublicClient fits; tests pass a stub (no network). */
 export type SimClient = {
@@ -122,7 +132,7 @@ export function revertReason(e: unknown): { reason: string; raw?: Hex } {
 }
 
 /** Decode the top-level call: ERC20 transfer / transferFrom / approve. Never throws. */
-export function decodeTokenEffects(tx: { from?: Address; to?: Address; data?: Hex } | null | undefined): { effects: TokenEffect[]; warnings: Warning[] } {
+export function decodeTokenEffects(tx: { from?: Address; to?: Address; data?: Hex } | null | undefined, unlimitedMin: bigint = SIM_DEFAULTS.unlimitedApproveMin): { effects: TokenEffect[]; warnings: Warning[] } {
   const effects: TokenEffect[] = [];
   const warnings: Warning[] = [];
   if (!tx || typeof tx !== "object") return { effects, warnings };
@@ -145,7 +155,7 @@ export function decodeTokenEffects(tx: { from?: Address; to?: Address; data?: He
       effects.push({ kind: "transfer", token, from: normalizeAddress(from) as Address, to: normalizeAddress(to) as Address, amount: { value: amount, source: src } });
     } else if (d.functionName === "approve") {
       const [spender, amount] = d.args as [Address, bigint];
-      const unlimited = amount >= maxUint256 / 2n;
+      const unlimited = amount >= unlimitedMin;
       effects.push({ kind: "approve", token, owner: sender, spender: normalizeAddress(spender) as Address, amount: { value: amount, source: src }, unlimited });
       if (unlimited) warnings.push({ code: "UNLIMITED_APPROVE", detail: `approve illimitato a ${normalizeAddress(spender)} sul token ${token}` });
     }
@@ -178,9 +188,14 @@ function parseTx(tx: unknown): { ok: true; value: ProposedTx } | { ok: false; re
 }
 
 /** Simulate a proposed tx against the chain state, without signing. Fail-closed: never throws. */
-export async function simulateTx(tx: unknown, client: unknown, o: { rpcLabel?: string; now?: number } = {}): Promise<SimulationResult> {
+export async function simulateTx(tx: unknown, client: unknown, o: SimOptions = {}): Promise<SimulationResult> {
   try {
     if (o.now !== undefined && !Number.isFinite(o.now)) return blocked("BAD_NOW: now non è un numero finito");
+    if (o.config !== undefined && (o.config == null || typeof o.config !== "object" || Array.isArray(o.config))) {
+      return blocked("BadConfig: config non valida");
+    }
+    const cap = tightenBigint(o.config?.unlimitedApproveMin, SIM_DEFAULTS.unlimitedApproveMin, true);
+    if (!cap.ok) return blocked(`BadConfig: ${cap.detail}`);
     const parsed = parseTx(tx);
     if (!parsed.ok) return blocked(parsed.reason);
     const p = parsed.value;
@@ -191,7 +206,7 @@ export async function simulateTx(tx: unknown, client: unknown, o: { rpcLabel?: s
     const rpc = o.rpcLabel ?? `rpc chain ${p.chainId}`;
     const value = p.value ?? 0n;
     const args = { account: p.from, to: p.to, data: p.data, value };
-    const { effects, warnings } = decodeTokenEffects(p);
+    const { effects, warnings } = decodeTokenEffects(p, cap.value);
     const simulatedAt = o.now ?? Date.now();
     const base = { chainId: p.chainId, from: p.from, to: p.to, tokenEffects: effects, warnings, simulatedAt };
 
@@ -278,10 +293,11 @@ export function toActionBlocked(sim: unknown, planId: Hex, o: { ts?: number; nat
   const s = sim as SimulationResult;
   const amount = knownAmount(s);
   if (!simSucceeded(s)) {
-    const unavailable = (s.revert?.reason ?? "").startsWith("BAD_") || (s.revert?.reason ?? "").startsWith("CHECK_ERROR");
+    const reasonText = s.revert?.reason ?? "";
+    const unavailable = reasonText.startsWith("BAD_") || reasonText.startsWith("CHECK_ERROR") || reasonText.startsWith("BadConfig");
     return blockedEvent({
       planId: id,
-      reason: unavailable ? "SimUnavailable" : "SimRevert",
+      reason: reasonText.startsWith("BadConfig") ? "BadConfig" : unavailable ? "SimUnavailable" : "SimRevert",
       amount,
       ts: o.ts ?? s.simulatedAt,
     });
