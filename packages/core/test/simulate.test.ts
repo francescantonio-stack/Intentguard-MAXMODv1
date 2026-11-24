@@ -340,6 +340,20 @@ describe("approval variants are blocked when unlimited or malformed", () => {
       expect(toActionBlocked(r, PLAN)?.reason, sel).toBe("MalformedApproval");
     }
   });
+
+  it("blocks odd-length hex after an approval selector as MalformedApproval; unknown odd hex still blocks", async () => {
+    for (const sel of APPROVAL_SELECTORS) {
+      const odd = (sel + "a") as Hex;
+      const r = await simulateTx(tx({ to: TOKEN, data: odd }), stub({}));
+      expect(r.ok, sel).toBe(false);
+      expect(r.blockReason, sel).toBe("MalformedApproval");
+      expect(toActionBlocked(r, PLAN)?.reason, sel).toBe("MalformedApproval");
+    }
+    const unknown = await simulateTx(tx({ data: "0xdeadbeefa" as Hex }), stub({}));
+    expect(unknown.ok).toBe(false);
+    expect(unknown.blockReason).toBe("SimUnavailable");
+    expect(unknown.revert?.reason).toMatch(/hex valido|BAD_VALUE/);
+  });
 });
 
 describe("RPC errors, balance and planId", () => {
