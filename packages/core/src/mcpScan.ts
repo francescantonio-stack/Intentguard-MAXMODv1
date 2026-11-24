@@ -3,6 +3,7 @@
  * Looks for hidden instructions in descriptions, tools with too-wide powers, and descriptions that
  * changed since they were pinned (a "rug pull"). Gives a verdict and, on BLOCK, a `blocked` QueueEvent.
  * Pure: no network, no keys, no signing. Anything malformed or unknown is blocked (fail-closed).
+ * First scan = WARN NO_BASELINE: never auto-connect; save `pins`, rescan with them before use (see docs/mcp-scan.md).
  */
 import { keccak256, toBytes, type Hex } from "viem";
 import { blockedEvent, type QueueEvent } from "./events";
@@ -34,7 +35,7 @@ export interface McpScanResult {
   pins: Record<string, Hex>;             // save these as the next baseline (only meaningful if verdict !== BLOCK)
 }
 
-const HIDDEN: RegExp[] = [
+const HIDDEN_SRC: RegExp[] = [
   /ignore (all |any )?(previous|prior|above|earlier) (instructions|rules|prompts?)/i,
   /(do not|don't|never) (tell|inform|mention|show|reveal)[^.]{0,40}(user|human)/i,
   /<\s*\/?\s*(important|system|instructions?|secret|hidden)\s*>/i,
@@ -45,6 +46,8 @@ const HIDDEN: RegExp[] = [
   /\b(send|forward|upload|exfiltrat\w*|post)\b[^.]{0,60}\b(to|at) (https?:\/\/|the url|this url|[\w.-]+\.\w{2,})/i,
   /~\/\.(ssh|aws|env|config)|id_rsa|\.env\b|mcp\.json/i,
 ];
+// any whitespace (tab, newline, double space) between words still matches
+const HIDDEN: RegExp[] = HIDDEN_SRC.map((re) => new RegExp(re.source.replace(/ /g, "\\s+"), re.flags));
 const SECRET_WORDS = /(private.?key|secret|seed|mnemonic|password|passphrase|api.?key|access.?token|\btoken\b|credential)/i;
 const WIDE_NAMES = /(^|[_\-.])(exec|execute|shell|bash|cmd|command|run_?command|eval|spawn|system|sudo|sign|transfer|withdraw|approve|delete_?all|drop|rm)([_\-.]|$)/i;
 const WIDE_PARAMS = /^(command|cmd|shell|script|code|exec|path|file|filepath|url|endpoint|query|sql)$/i;
@@ -61,16 +64,43 @@ function canon(x: unknown): string {
   if (isObj(x)) return `{${Object.keys(x).sort().map((k) => `${JSON.stringify(k)}:${canon(x[k])}`).join(",")}}`;
   return JSON.stringify(x ?? null);
 }
-export function pinTool(tool: { name: string; description?: unknown; inputSchema?: unknown; annotations?: unknown }): Hex {
-  return keccak256(toBytes(canon({ n: tool.name, d: tool.description ?? null, s: tool.inputSchema ?? null, a: tool.annotations ?? null })));
+/** Pin of the WHOLE tool object (title, outputSchema, _meta and any other field included). */
+export function pinTool(tool: unknown): Hex {
+  return keccak256(toBytes(canon(tool)));
+}
+
+// Basic confusables (Cyrillic/Greek look-alikes) -> Latin, applied after NFKC (which folds fullwidth).
+const HOMO: Record<string, string> = {
+  "а": "a", "е": "e", "о": "o", "р": "p", "с": "c", "х": "x", "у": "y", "і": "i", "ј": "j", "ѕ": "s", "ԁ": "d", "һ": "h", "ӏ": "l", "ɡ": "g",
+  "А": "A", "В": "B", "Е": "E", "К": "K", "М": "M", "Н": "H", "О": "O", "Р": "P", "С": "C", "Т": "T", "Х": "X", "І": "I", "Ј": "J", "Ѕ": "S",
+  "α": "a", "ο": "o", "ρ": "p", "ν": "v", "τ": "t", "ι": "i", "κ": "k", "Α": "A", "Β": "B", "Ε": "E", "Ζ": "Z", "Η": "H", "Ι": "I", "Κ": "K", "Μ": "M", "Ν": "N", "Ο": "O", "Ρ": "P", "Τ": "T", "Υ": "Y", "Χ": "X",
+};
+export function normalizeText(x: string): string {
+  return x.normalize("NFKC").replace(/./gu, (c) => HOMO[c] ?? c);
+}
+
+const B64 = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
+/** Decode a base64 run; returns text only if it is mostly printable, else null. */
+function decodeB64(run: string): string | null {
+  const clean = run.replace(/-/g, "+").replace(/_/g, "/").replace(/=+$/, "");
+  let bits = 0, acc = 0, out = "";
+  for (const ch of clean) {
+    const v = B64.indexOf(ch);
+    if (v < 0) return null;
+    acc = (acc << 6) | v; bits += 6;
+    if (bits >= 8) { bits -= 8; out += String.fromCharCode((acc >> bits) & 0xff); }
+  }
+  if (out.length < 8) return null;
+  const printable = [...out].filter((c) => c >= " " && c <= "~").length;
+  return printable / out.length >= 0.9 ? out : null;
 }
 
 /** All strings found inside the schema (property names, descriptions, enums, defaults). */
-function schemaTexts(x: unknown, out: string[] = [], depth = 0): string[] {
+function allTexts(x: unknown, out: string[] = [], depth = 0): string[] {
   if (depth > 20) { out.push("\u0000DEPTH"); return out; }
   if (typeof x === "string") out.push(x);
-  else if (Array.isArray(x)) x.forEach((v) => schemaTexts(v, out, depth + 1));
-  else if (isObj(x)) for (const [k, v] of Object.entries(x)) { out.push(k); schemaTexts(v, out, depth + 1); }
+  else if (Array.isArray(x)) x.forEach((v) => allTexts(v, out, depth + 1));
+  else if (isObj(x)) for (const [k, v] of Object.entries(x)) { out.push(k); allTexts(v, out, depth + 1); }
   return out;
 }
 function paramNames(schema: unknown): string[] {
@@ -111,23 +141,30 @@ export function scanMcpTools(input: McpScanInput): McpScanResult {
     if (t.inputSchema !== undefined && !isObj(t.inputSchema)) { add("MALFORMED", "high", name, "inputSchema is not an object"); continue; }
     if (names.has(name)) { add("DUPLICATE_TOOL", "high", name, "same tool name twice (shadowing)"); continue; }
     names.add(name);
-    pins[name] = pinTool(t as { name: string });
+    try { pins[name] = pinTool(t); } catch { add("MALFORMED", "high", name, "tool is not plain JSON"); continue; }
 
     const desc = (t.description as string | undefined) ?? "";
-    const texts = [name, desc, ...schemaTexts(t.inputSchema), ...schemaTexts(t.annotations)];
+    // scan EVERY field of the tool (title, outputSchema, _meta, ...), not only the known ones
+    const texts = allTexts(t);
     if (texts.includes("\u0000DEPTH")) add("MALFORMED", "high", name, "schema nested too deep");
     const joined = texts.join("\n");
+    const norm = normalizeText(joined);
+    // short base64 runs (below maxBlobLength) are decoded and scanned too
+    const decoded = [...norm.matchAll(/[A-Za-z0-9+/_-]{16,}={0,2}/g)].map((m) => decodeB64(m[0])).filter((d): d is string => d !== null);
 
-    const hit = HIDDEN.find((re) => re.test(joined));
+    const hit = HIDDEN.find((re) => re.test(norm));
+    const hitB64 = hit ? undefined : HIDDEN.find((re) => decoded.some((d) => re.test(normalizeText(d))));
     if (hit) add("HIDDEN_INSTRUCTION", "high", name, `matches ${hit.source.slice(0, 40)}`);
+    else if (hitB64) add("HIDDEN_INSTRUCTION", "high", name, `inside base64: ${hitB64.source.slice(0, 40)}`);
     if (INVISIBLE.test(joined)) add("INVISIBLE_CHARS", "high", name, "invisible or bidi characters in text");
     if (blobRe.test(joined)) add("ENCODED_BLOB", "high", name, "long encoded string in text");
-    const other = allNames.find((o) => o !== name && o.length >= 4 && new RegExp(`\\b${o.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}\\b`).test(desc));
+    const other = allNames.find((o) => o !== name && o.length >= 4 && new RegExp(`\\b${o.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}\\b`).test(joined));
     if (other) add("CROSS_TOOL_REFERENCE", "medium", name, `description mentions tool ${other}`);
     if (desc.length > cfg.maxDescriptionLength) add("LONG_DESCRIPTION", "medium", name, `${desc.length} chars`);
 
     const params = paramNames(t.inputSchema);
-    if (WIDE_NAMES.test(name)) add("WIDE_PERMISSION", "high", name, "tool name suggests shell, signing or fund movement");
+    const snake = normalizeText(name).replace(/([a-z0-9])([A-Z])/g, "$1_$2").replace(/([A-Z]+)([A-Z][a-z])/g, "$1_$2");
+    if (WIDE_NAMES.test(snake)) add("WIDE_PERMISSION", "high", name, "tool name suggests shell, signing or fund movement");
     const wideParam = params.find((p) => WIDE_PARAMS.test(p));
     if (wideParam) add("WIDE_PERMISSION", "medium", name, `free-form parameter "${wideParam}"`);
     const secretParam = params.find((p) => SECRET_WORDS.test(p));
