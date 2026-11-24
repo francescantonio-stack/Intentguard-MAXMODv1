@@ -8,19 +8,13 @@
  * Every decision (auto, approved) expires after `ttlMs`, like pending items.
  * Normalization: token UPPERCASE, planId and approvers lowercase.
  */
+import type { QueueEvent } from "./events";
+
 export type QueueStatus = "auto" | "pending" | "approved" | "rejected" | "expired" | "consumed";
 
-/** Block reasons, aligned with ActionBlocked(planId, reason, amount). */
-export type BlockReason = "NotInQueue" | "Pending" | "Consumed" | "Expired" | "Rejected" | "AmountMismatch" | "MissingAmount";
+/** Queue block reasons, aligned with ActionBlocked(planId, reason, amount). Local to the queue; shared vocabulary lives in events.ts. */
+export type QueueBlockReason = "NotInQueue" | "Pending" | "Consumed" | "Expired" | "Rejected" | "AmountMismatch" | "MissingAmount";
 
-export type QueueEvent = {
-  kind: "queued" | "auto_approved" | "approved" | "rejected" | "expired" | "consumed" | "blocked";
-  planId: `0x${string}`;
-  reason: string; // BlockReason for "blocked"; queue reason or "" otherwise
-  amount: bigint; // base units
-  ts: string;
-  id: string | null;
-};
 
 export interface PaymentRequest {
   planId: `0x${string}`;
@@ -55,7 +49,7 @@ export interface ApprovalQueueConfig {
 
 const PLAN_RE = /^0x[0-9a-f]{64}$/;
 const CLOSED: ReadonlySet<QueueStatus> = new Set(["expired", "rejected", "consumed"]);
-const BLOCK_OF: Record<QueueStatus, BlockReason> = {
+const BLOCK_OF: Record<QueueStatus, QueueBlockReason> = {
   pending: "Pending", consumed: "Consumed", expired: "Expired", rejected: "Rejected",
   auto: "NotInQueue", approved: "NotInQueue", // never used for blocks of runnable items
 };
@@ -194,7 +188,7 @@ export class ApprovalQueue {
     const p = String(planId).toLowerCase();
     const id = this.byPlan.get(p);
     const blockAmt = typeof amount === "bigint" ? amount : 0n;
-    const block = (reason: BlockReason, amt: bigint, itemId: string | null): never => {
+    const block = (reason: QueueBlockReason, amt: bigint, itemId: string | null): never => {
       this.emit("blocked", p, amt, itemId, reason);
       throw new Error(`blocked: ${reason}`);
     };

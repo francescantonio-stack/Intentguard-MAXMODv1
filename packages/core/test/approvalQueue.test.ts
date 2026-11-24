@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
-import { ApprovalQueue, type QueueEvent } from "../src/approvalQueue";
+import { ApprovalQueue } from "../src/approvalQueue";
+import type { QueueEvent } from "../src/events";
 
 const h = (n: number) => (`0x${n.toString(16).padStart(64, "0")}`) as `0x${string}`;
 const USDC = 1_000_000n; // 6 decimals
