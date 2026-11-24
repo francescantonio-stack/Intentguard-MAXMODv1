@@ -3,7 +3,7 @@ import type { Sourced } from "./simulate";
 import type { QueueEvent } from "./events";
 import { blockedEvent } from "./guards";
 import { keccak256, stringToHex } from "viem";
-import { tightenNumber } from "./limits";
+import { cappedNumber, isConfigObject } from "./limits";
 
 /** Public testnet endpoints used by the probe page (idea: Railguard). Never mainnet, never user-supplied URLs. */
 export const PROBE_NETWORKS = [
@@ -14,8 +14,9 @@ export const PROBE_NETWORKS = [
 
 export type ProbeNetwork = (typeof PROBE_NETWORKS)[number];
 
-/** Default RPC timeout. Input may only lower it. */
+/** Default RPC timeout (15s). Hard max is PROBE_MAX.timeoutMs (30s); above that -> BadConfig. */
 export const PROBE_DEFAULTS: { timeoutMs: number } = { timeoutMs: 15_000 };
+export const PROBE_MAX = { timeoutMs: 30_000 } as const;
 
 export type JsonRpc = (method: string, params?: unknown[]) => Promise<unknown>;
 
@@ -158,10 +159,17 @@ export async function probeNetworks(o?: {
       event: failEvent(net, "BadConfig"),
     }));
   }
-  const cap = tightenNumber(o.config?.timeoutMs, PROBE_DEFAULTS.timeoutMs, true);
-  if (!cap.ok || (o.config !== undefined && (o.config == null || typeof o.config !== "object" || Array.isArray(o.config)))) {
+  if (o.config !== undefined && o.config !== null && !isConfigObject(o.config)) {
     return list.map((net) => ({
-      id: net.id, ok: false, error: cap.ok ? "BadConfig: config non valida" : `BadConfig: ${cap.detail}`,
+      id: net.id, ok: false, error: "BadConfig: config non valida",
+      native: net.native, rpc: net.rpc, explorer: net.explorer, checkedAt: now,
+      event: failEvent(net, "BadConfig"),
+    }));
+  }
+  const cap = cappedNumber(o.config?.timeoutMs, PROBE_DEFAULTS.timeoutMs, PROBE_MAX.timeoutMs);
+  if (!cap.ok) {
+    return list.map((net) => ({
+      id: net.id, ok: false, error: `BadConfig: ${cap.detail}`,
       native: net.native, rpc: net.rpc, explorer: net.explorer, checkedAt: now,
       event: failEvent(net, "BadConfig"),
     }));

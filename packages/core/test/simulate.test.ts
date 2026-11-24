@@ -257,11 +257,18 @@ describe("config limits", () => {
     expect(wide.ok).toBe(false);
     expect(wide.revert?.reason).toMatch(/BadConfig/);
     expect(toActionBlocked(wide, PLAN)?.reason).toBe("BadConfig");
-    for (const config of [null, "x", { unlimitedApproveMin: 0n }, { unlimitedApproveMin: -1n }, { unlimitedApproveMin: 100 }, { unlimitedApproveMin: "1" }, { unlimitedApproveMin: NaN }] as const) {
+    for (const config of ["x", 1, [], { unlimitedApproveMin: 0n }, { unlimitedApproveMin: -1n }, { unlimitedApproveMin: 100 }, { unlimitedApproveMin: "1" }, { unlimitedApproveMin: NaN }] as const) {
       const r = await simulateTx(tx(), stub({}), { config: config as never });
       expect(r.ok, String(config)).toBe(false);
       expect(r.revert?.reason).toMatch(/BadConfig/);
     }
+  });
+
+  it("uses the default unlimited-approve threshold when config or the field is null", async () => {
+    const a = await simulateTx(tx(), stub({}), { config: null as never });
+    expect(a.ok).toBe(true);
+    const b = await simulateTx(tx(), stub({}), { config: { unlimitedApproveMin: null } as never });
+    expect(b.ok).toBe(true);
   });
 
   it("accepts a tighter threshold and flags a smaller approve", async () => {

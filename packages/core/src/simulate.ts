@@ -6,7 +6,7 @@ import { erc20Abi, planExecutorAbi } from "./abi";
 import { redactSecrets } from "./redact";
 import type { QueueEvent } from "./events";
 import { blockedEvent, normalizeAddress, lowerPlanId } from "./guards";
-import { tightenBigint } from "./limits";
+import { isConfigObject, tightenBigint } from "./limits";
 import { decodeApproval } from "./approvals";
 
 /**
@@ -255,7 +255,7 @@ export function isRpcFailure(e: unknown): boolean {
 export async function simulateTx(tx: unknown, client: unknown, o: SimOptions = {}): Promise<SimulationResult> {
   try {
     if (o.now !== undefined && !Number.isFinite(o.now)) return blocked("BAD_NOW: now non è un numero finito");
-    if (o.config !== undefined && (o.config == null || typeof o.config !== "object" || Array.isArray(o.config))) {
+    if (o.config !== undefined && o.config !== null && !isConfigObject(o.config)) {
       return blocked("BadConfig: config non valida");
     }
     const cap = tightenBigint(o.config?.unlimitedApproveMin, SIM_DEFAULTS.unlimitedApproveMin, true);
