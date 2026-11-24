@@ -188,4 +188,51 @@ describe("ApprovalQueue", () => {
     expect(() => new ApprovalQueue({ thresholds: { USDC: -1n } })).toThrow(/non-negative/);
     expect(() => new ApprovalQueue({ thresholds: {}, ttlMs: Number.NaN })).toThrow(/ttlMs/);
   });
+
+  it("now() NaN, Infinity or throwing -> blocked BadNow, nothing written", () => {
+    for (const bad of [() => Number.NaN, () => Infinity, () => { throw new Error("x"); }, () => "1" as unknown as number]) {
+      const events: QueueEvent[] = [];
+      const q = new ApprovalQueue({ thresholds: { USDC: 2n * USDC }, now: bad, onEvent: (e) => events.push(e) });
+      expect(() => q.submit(pay(1, 1n * USDC))).toThrow("BadNow");
+      expect(q.size()).toBe(0);
+      expect(events).toEqual([expect.objectContaining({ kind: "blocked", reason: "BadNow", planId: h(1), amount: 1n * USDC })]);
+      expect(q.canExecute(h(1))).toBe(false);
+    }
+  });
+
+  it("clock going backwards (QC case) -> canExecute false, consume blocked BadNow, no write", () => {
+    let t = 1_000_000;
+    const events: QueueEvent[] = [];
+    const q = new ApprovalQueue({ thresholds: { USDC: 2n * USDC }, ttlMs: 1000, now: () => t, onEvent: (e) => events.push(e) });
+    q.submit(pay(1, 1n * USDC));
+    t = 1_005_000;
+    expect(q.canExecute(h(1))).toBe(false); // expired
+    t = 1_000_500;
+    expect(q.canExecute(h(1))).toBe(false);
+    expect(events.at(-1)).toMatchObject({ kind: "blocked", reason: "BadNow" });
+    expect(() => q.consume(h(1), 1n * USDC)).toThrow("BadNow");
+    expect(() => q.submit(pay(2, 1n * USDC))).toThrow("BadNow");
+    expect(q.size()).toBe(1);
+    t = 1_006_000; // clock is fine again: still expired
+    expect(q.canExecute(h(1))).toBe(false);
+    expect(() => q.consume(h(1), 1n * USDC)).toThrow("Expired");
+  });
+
+  it("before expiry, a clock jump back does not make anything runnable again", () => {
+    let t = 1_000_000;
+    const q = new ApprovalQueue({ thresholds: { USDC: 0n }, ttlMs: 1000, now: () => t });
+    q.submit(pay(1, 1n * USDC)); // pending (above threshold)
+    t = 1_002_000;
+    expect(q.pending()).toEqual([]);
+    t = 1_000_100;
+    expect(() => q.approve("q1", "0xabc", h(1))).toThrow("BadNow");
+  });
+
+  it("blocked events never echo an invalid planId", () => {
+    const { q, events } = setup();
+    expect(() => q.consume("not-a-plan", 1n)).toThrow("NotInQueue");
+    expect(events.at(-1)).toMatchObject({ kind: "blocked", planId: `0x${"0".repeat(64)}`, reason: "NotInQueue", amount: 1n });
+    expect(() => q.consume(h(7).toUpperCase().replace("0X", "0x"), 1n)).toThrow("NotInQueue");
+    expect(events.at(-1)!.planId).toBe(h(7));
+  });
 });
