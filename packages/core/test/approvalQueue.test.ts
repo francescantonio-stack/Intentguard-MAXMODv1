@@ -334,4 +334,33 @@ describe("ApprovalQueue", () => {
     expect(q.submit(evil as never)).toBeNull();
     expect(events.at(-1)).toMatchObject({ kind: "blocked", reason: "BadInput" });
   });
+
+  it("tokens are trimmed everywhere: ' usdc ' = USDC in thresholds and submit; blank = BadToken", () => {
+    const ev: QueueEvent[] = [];
+    const q = new ApprovalQueue({ thresholds: { " usdc ": 2n * USDC }, now: () => 1_000, onEvent: (e) => ev.push(e) });
+    const a = q.submit(pay(1, 1n * USDC, " usdc "))!;
+    expect(a.status).toBe("auto");
+    expect(a.token).toBe("USDC");
+    expect(q.submit(pay(2, 1n * USDC, "USDC"))!.status).toBe("auto"); // same window total
+    expect(q.submit(pay(3, 1n, "\tUsdc "))!.reason).toBe("WindowTotal");
+    expect(q.autoSpent(" usdc ")).toBe(2n * USDC);
+    expect(q.submit(pay(4, 1n, " \t "))).toBeNull();
+    expect(ev.at(-1)).toMatchObject({ kind: "blocked", reason: "BadToken", planId: h(4) });
+    const ev2: QueueEvent[] = [];
+    const dead = new ApprovalQueue({ thresholds: { "  ": 1n }, onEvent: (e) => ev2.push(e) });
+    expect(ev2.map((e) => e.reason)).toEqual(["BadToken"]);
+    expect(dead.submit(pay(1, 1n))).toBeNull();
+    expect(dead.canExecute(h(1))).toBe(false);
+  });
+
+  it("reviewer cases: ttl 25h and window 8 days -> BadConfig event, no throw, dead queue", () => {
+    for (const bad of [{ ttlMs: 25 * H }, { windowMs: 8 * DAY }]) {
+      const ev: QueueEvent[] = [];
+      const q = new ApprovalQueue({ thresholds: { USDC: 2n * USDC }, now: () => 1_000, onEvent: (e) => ev.push(e), ...bad });
+      expect(ev).toEqual([expect.objectContaining({ kind: "blocked", reason: "BadConfig" })]);
+      expect(q.submit(pay(1, 1n))).toBeNull();
+      expect(q.canExecute(h(1))).toBe(false);
+      expect(ev.map((e) => e.reason)).toEqual(["BadConfig", "BadConfig", "BadConfig"]);
+    }
+  });
 });
