@@ -11,3 +11,4 @@ export * from "./simulate";
 export * from "./probe";
 export * from "./redact";
 export * from "./events";
+export * from "./counterparty";

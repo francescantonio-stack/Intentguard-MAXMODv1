@@ -1,0 +1,91 @@
+import { describe, expect, it } from "vitest";
+import { checkCounterparty, isLookalike, type CodeClient } from "../src/counterparty";
+
+const A = "0xd2FE6a3Ae252D6fb2f604805898177c8FdaAa24B";
+const B = "0x1111111111111111111111111111111111111111";
+const ZERO = "0x" + "00".repeat(20);
+const PLAN = "0xBB".padEnd(66, "B");
+const eoa: CodeClient = { getCode: async () => "0x" };
+const contract: CodeClient = { getCode: async () => "0x60806040" };
+const boom: CodeClient = { getCode: async () => { throw new Error("rpc down"); } };
+
+const codes = (r: Awaited<ReturnType<typeof checkCounterparty>>) => r.findings.map((f) => f.code);
+
+describe("checkCounterparty", () => {
+  it("an allowlisted EOA already paid is ok", async () => {
+    const r = await checkCounterparty({ address: A, allowlist: [A.toUpperCase()], paidBefore: [A], planId: PLAN, amount: 5n, token: "usdc", now: 1_800_000_000_000 }, eoa);
+    expect(r.verdict).toBe("ok");
+    expect(r.address).toBe(A.toLowerCase());
+    expect(r.token).toBe("USDC");
+    expect(r.kind).toBe("eoa");
+    expect(r.event).toBeNull();
+    expect(r.successOddsInput.dryRun[0]!.ok).toBe(true);
+    expect(codes(r)).toContain("Allowlisted");
+    expect(codes(r)).toContain("CounterpartyEoa");
+  });
+
+  it("blocks the zero address", async () => {
+    const r = await checkCounterparty({ address: ZERO, planId: PLAN, amount: 9n, now: 1 }, eoa);
+    expect(r.verdict).toBe("blocked");
+    expect(r.kind).toBe("zero");
+    expect(r.event).toMatchObject({ kind: "blocked", reason: "ZeroAddress", planId: PLAN.toLowerCase(), amount: 9n, id: null });
+    expect(typeof r.event!.amount).toBe("bigint");
+    expect(r.event!.amount).not.toBe(0n);
+    expect(r.successOddsInput.dryRun[0]).toEqual({ ok: false, reason: "ZeroAddress" });
+    expect(r.safeHoldInput.observations[0]!.confidence).toBe(0);
+  });
+
+  it("blocks a denylisted address (deny wins over allow)", async () => {
+    const r = await checkCounterparty({ address: B, denylist: [B], allowlist: [B], paidBefore: [B], planId: PLAN, amount: 1n, now: 1 }, eoa);
+    expect(r.verdict).toBe("blocked");
+    expect(r.event?.reason).toBe("CounterpartyDenylisted");
+    expect(r.event?.planId).toBe(PLAN.toLowerCase());
+  });
+
+  it("blocks a lookalike of a known address (address poisoning)", async () => {
+    const known = "0x1111111111111111111111111111111111111111";
+    const fake = "0x1111aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa1111";
+    expect(isLookalike(known, fake, 4)).toBe(true);
+    expect(isLookalike(known, known, 4)).toBe(false);
+    const r = await checkCounterparty({ address: fake, paidBefore: [known], planId: PLAN, amount: 2n, now: 1 }, eoa);
+    expect(r.verdict).toBe("blocked");
+    expect(r.event?.reason).toBe("LookalikeAddress");
+    expect(r.event?.amount).toBe(2n);
+  });
+
+  it("warns on a new payee and on a contract, without blocking by default", async () => {
+    const r = await checkCounterparty({ address: B, paidBefore: [A], planId: PLAN, amount: 3n, now: 1 }, contract);
+    expect(r.verdict).toBe("warning");
+    expect(r.kind).toBe("contract");
+    expect(codes(r)).toEqual(expect.arrayContaining(["NewCounterparty", "CounterpartyContract"]));
+    expect(r.event).toBeNull();
+    expect(r.successOddsInput.dryRun[0]!.ok).toBe(true);
+    expect(r.safeHoldInput.observations[0]!.confidence).toBe(0.7);
+  });
+
+  it("blocks a new payee when blockNew is set, and a stranger when strictAllowlist is set", async () => {
+    const n = await checkCounterparty({ address: B, paidBefore: [A], blockNew: true, planId: PLAN, amount: 4n, now: 1 }, eoa);
+    expect(n.verdict).toBe("blocked");
+    expect(n.event?.reason).toBe("NewCounterparty");
+    const s = await checkCounterparty({ address: B, allowlist: [A], strictAllowlist: true, paidBefore: [A], planId: PLAN, amount: 4n, now: 1 }, eoa);
+    expect(s.verdict).toBe("blocked");
+    expect(s.event?.reason).toBe("NotAllowlisted");
+  });
+
+  it("is fail-closed: null, bad address, bad now, missing client or RPC error never yield ok", async () => {
+    const cases = await Promise.all([
+      checkCounterparty(null, eoa),
+      checkCounterparty({ address: "nope", now: 1 }, eoa),
+      checkCounterparty({ address: A, now: NaN }, eoa),
+      checkCounterparty({ address: A, now: Infinity }, eoa),
+      checkCounterparty({ address: A, now: 1 }, null),
+      checkCounterparty({ address: A, now: 1, paidBefore: [A] }, boom),
+    ]);
+    for (const r of cases) {
+      expect(r.verdict).toBe("blocked");
+      expect(r.event?.kind).toBe("blocked");
+      expect(r.event?.reason).toBe("SimUnavailable");
+      expect(r.successOddsInput.dryRun[0]!.ok).toBe(false);
+    }
+  });
+});
