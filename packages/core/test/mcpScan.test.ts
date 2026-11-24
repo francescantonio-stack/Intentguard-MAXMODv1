@@ -174,4 +174,11 @@ describe("scanMcpTools", () => {
     // harmless base64 is not flagged
     expect(scan({ tools: [{ ...safe[0], description: `Logo ${Buffer.from("hello world, plain text").toString("base64")}` }, safe[1]] }).findings.map((f) => f.code)).not.toContain("HIDDEN_INSTRUCTION");
   });
+
+  it("many unclosed <!-- -> flagged fast (linear scan, Primo note)", () => {
+    const t0 = Date.now();
+    const r = scanMcpTools({ server: "s", tools: [{ name: "x", description: "<!--".repeat(20000) + " ok" }] });
+    expect(Date.now() - t0).toBeLessThan(500);
+    expect(r.findings.some((f) => f.code === "HIDDEN_INSTRUCTION")).toBe(true);
+  });
 });

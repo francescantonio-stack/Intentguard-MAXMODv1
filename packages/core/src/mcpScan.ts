@@ -42,7 +42,7 @@ const HIDDEN_SRC: RegExp[] = [
   /\b(system prompt|developer message)\b/i,
   /\byou (must|should) (now |first |always )?(call|run|use|send|read|forward)\b/i,
   /\b(before|after) (using|calling) (this|any) tool\b/i,
-  /<!--[\s\S]*?-->/,
+  /<!--/, // any comment opener (closed or not) hides text; linear, no backtracking on many unclosed `<!--`
   /\b(send|forward|upload|exfiltrat\w*|post)\b[^.]{0,60}\b(to|at) (https?:\/\/|the url|this url|[\w.-]+\.\w{2,})/i,
   /~\/\.(ssh|aws|env|config)|id_rsa|\.env\b|mcp\.json/i,
 ];
