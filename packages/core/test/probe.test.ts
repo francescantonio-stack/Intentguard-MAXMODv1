@@ -118,3 +118,12 @@ describe("nearProbe, clock and fetch", () => {
     expect(await ok("eth_chainId")).toBe("0x1");
   });
 });
+
+  it("returns every network blocked, without RPC, when the input is null or not an object", async () => {
+    for (const input of [null, undefined, 0, "x"] as const) {
+      const rows = await probeNetworks(input as never);
+      expect(rows.length).toBeGreaterThan(0);
+      expect(rows.every((r) => r.ok === false), String(input)).toBe(true);
+      expect(rows[0]?.event?.reason).toBe("SimUnavailable");
+    }
+  });

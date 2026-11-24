@@ -226,6 +226,13 @@ describe("fail-closed", () => {
 });
 
 describe("config limits", () => {
+  it("rejects a chainId that does not fit in a safe integer", async () => {
+    const r = await simulateTx({ chainId: 2n ** 256n, from: FROM, to: TO, data: "0x", value: 0n }, stub({}));
+    expect(r.ok).toBe(false);
+    expect(r.revert?.reason).toMatch(/chainId/);
+  });
+
+
   it("rejects a loosened unlimited-approve threshold and invalid config (BadConfig)", async () => {
     const wide = await simulateTx(tx(), stub({}), { config: { unlimitedApproveMin: SIM_DEFAULTS.unlimitedApproveMin + 1n } });
     expect(wide.ok).toBe(false);

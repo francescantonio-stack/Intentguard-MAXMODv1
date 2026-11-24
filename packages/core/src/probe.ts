@@ -1,6 +1,7 @@
 import { BASE_SEPOLIA, MONAD_TESTNET } from "./chains";
 import type { Sourced } from "./simulate";
-import { blockedEvent, type QueueEvent } from "./events";
+import type { QueueEvent } from "./events";
+import { blockedEvent } from "./guards";
 import { keccak256, stringToHex } from "viem";
 import { tightenNumber } from "./limits";
 
@@ -127,14 +128,17 @@ export function createProbeRpc(net: ProbeNetwork, timeoutMs = PROBE_DEFAULTS.tim
 }
 
 /** Probe one or all known testnets. `rpcFor` is injected in tests; default uses public RPC (read-only). */
-export async function probeNetworks(o: {
+export async function probeNetworks(o?: {
   rpcFor?: (net: ProbeNetwork) => JsonRpc;
   ids?: string[];
   now?: number;
   clock?: () => number;
   config?: { timeoutMs?: unknown };
   fetchImpl?: ProbeFetch;
-} = {}): Promise<NetworkProbe[]> {
+}): Promise<NetworkProbe[]> {
+  if (o == null || typeof o !== "object") {
+    return PROBE_NETWORKS.map((net) => failed(net, "BAD_TX: input non valido", Date.now()));
+  }
   const clock = o.clock ?? Date.now;
   const now = o.now !== undefined ? o.now : clock();
   const list = (o.ids === undefined ? PROBE_NETWORKS : PROBE_NETWORKS.filter((n) => o.ids!.includes(n.id))) as ProbeNetwork[];

@@ -11,7 +11,8 @@ export * from "./approvals";
 export * from "./simulate";
 export * from "./probe";
 export * from "./redact";
-/** QueueEvent e BlockReason: fonte unica (non ridefinirli altrove). */
+/** QueueEvent e BlockReason: solo tipi. Helper fail-closed: ./guards (fonte unica). */
 export * from "./events";
+export * from "./guards";
 export * from "./limits";
 export * from "./counterparty";

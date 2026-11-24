@@ -4,7 +4,8 @@ import {
 } from "viem";
 import { erc20Abi, planExecutorAbi } from "./abi";
 import { redactSecrets } from "./redact";
-import { blockedEvent, normalizeAddress, normalizePlanId, type QueueEvent } from "./events";
+import type { QueueEvent } from "./events";
+import { blockedEvent, normalizeAddress, lowerPlanId } from "./guards";
 import { tightenBigint } from "./limits";
 import { decodeApproval } from "./approvals";
 
@@ -207,7 +208,9 @@ function parseTx(tx: unknown): { ok: true; value: ProposedTx } | { ok: false; re
   const t = tx as Record<string, unknown>;
   const chain = parseCount(t.chainId, "chainId");
   if (!chain.ok) return chain;
-  if (chain.value <= 0n) return { ok: false, reason: "BAD_VALUE: chainId deve essere positivo" };
+  if (chain.value <= 0n || chain.value > BigInt(Number.MAX_SAFE_INTEGER)) {
+    return { ok: false, reason: "BAD_VALUE: chainId deve essere un intero positivo sicuro" };
+  }
   const from = parseAddr(t.from, "from");
   if (!from.ok) return from;
   const to = parseAddr(t.to, "to");
@@ -381,10 +384,7 @@ export const reasonLabel = (s: string): Hex => stringToHex(s.slice(0, 31), { siz
  * Codes: SimRevert | SimUnavailable | UnlimitedApprove.
  */
 export function toActionBlocked(sim: unknown, planId?: unknown, o: { ts?: number; nativeValue?: bigint } = {}): QueueEvent | null {
-  let id: Hex | undefined;
-  if (typeof planId === "string" && planId.trim()) {
-    try { id = normalizePlanId(planId); } catch { id = undefined; }
-  }
+  const id = lowerPlanId(planId) ?? undefined;
 
   const knownAmount = (s: SimulationResult | undefined): bigint => {
     let amount = 0n;

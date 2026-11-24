@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { blockedEvent, normalizeAddress, normalizePlanId, normalizeToken } from "../src/events";
+import { blockedEvent, normalizeAddress, normalizePlanId, normalizeToken } from "../src/guards";
 
 const PLAN = "0xAA".padEnd(66, "A");
 
