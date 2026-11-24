@@ -13,7 +13,7 @@ import type { QueueEvent } from "./events";
 
 export type BudgetBlockReason =
   | "BadNow" | "BadAmount" | "BadPlanId" | "UnknownBudget" | "WrongToken" | "OverBudget"
-  | "BadCap" | "OverParentCap" | "BelowChildrenReserve" | "DuplicateId" | "IdReusedElsewhere";
+  | "BadCap" | "OverParentCap" | "BelowChildrenReserve" | "DuplicateId" | "IdReusedElsewhere" | "CannotRemove";
 
 export interface BudgetConfigEvent {
   kind: "allocated" | "resized" | "removed";
@@ -49,8 +49,8 @@ export class BudgetTreeBlocked extends Error {
 
 export class BudgetTree {
   private nodes = new Map<string, Node>();
-  /** removed ids -> parent and their spends, to give the history back if the id returns */
-  private graveyard = new Map<string, { parent: string; spends: Spend[] }>();
+  /** removed ids -> parent, own spends and orphans, to give the history back if the id returns */
+  private graveyard = new Map<string, { parent: string; spends: Spend[]; orphans: Spend[] }>();
   private readonly windowMs: number;
   private readonly nowFn: () => number;
   private readonly onEvent?: (e: QueueEvent) => void;
@@ -111,7 +111,8 @@ export class BudgetTree {
     for (const n of this.nodes.values()) { n.spends = keep(n.spends); n.orphans = keep(n.orphans); }
     for (const [id, g] of this.graveyard) {
       g.spends = keep(g.spends);
-      if (!g.spends.length) this.graveyard.delete(id);
+      g.orphans = keep(g.orphans);
+      if (!g.spends.length && !g.orphans.length) this.graveyard.delete(id);
     }
   }
 
@@ -164,15 +165,16 @@ export class BudgetTree {
     if (ghost && ghost.parent !== parentId) this.block("IdReusedElsewhere", `${childId} was under ${ghost.parent} in the window`, childId, cap);
     // the returning history moves from the parent's orphans back to the child
     const back = ghost ? ghost.spends : [];
-    const orphansAfter = ghost ? p.orphans.filter((s) => !back.includes(s)) : p.orphans;
+    const backOrphans = ghost ? ghost.orphans : [];
+    const orphansAfter = ghost ? p.orphans.filter((s) => !back.includes(s) && !backOrphans.includes(s)) : p.orphans;
     const nonChildAfter = this.sum(p.spends) + this.sum(orphansAfter);
-    const backSum = this.sum(back);
+    const backSum = this.sum(back) + this.sum(backOrphans);
     const childNeed = cap > backSum ? cap : backSum; // a child's slot covers at least its history
     if (this.reserved(p) + childNeed + nonChildAfter > p.cap) this.block("OverParentCap", "children + parent spent would exceed parent cap", childId, cap);
     p.children.add(childId);
     p.orphans = orphansAfter;
     this.graveyard.delete(childId);
-    this.nodes.set(childId, { id: childId, parent: parentId, cap, token: p.token, spends: [...back], orphans: [], children: new Set() });
+    this.nodes.set(childId, { id: childId, parent: parentId, cap, token: p.token, spends: [...back], orphans: [...backOrphans], children: new Set() });
     this.onConfig?.({ kind: "allocated", id: childId, cap, ts: new Date(now).toISOString() });
   }
 
@@ -196,14 +198,16 @@ export class BudgetTree {
   remove(id: string): void {
     const now = this.nowOrBlock(id, 0n);
     this.prune(now);
+    if (!this.nodes.has(id)) this.block("UnknownBudget", `unknown budget ${id}`, id, 0n);
     const n = this.get(id);
-    if (n.parent === null) throw new Error("cannot remove root");
-    if (n.children.size) throw new Error("remove children first");
+    if (n.parent === null) this.block("CannotRemove", "cannot remove root", id, 0n);
+    if (n.children.size) this.block("CannotRemove", "remove children first", id, 0n);
     const p = this.get(n.parent);
     p.children.delete(id);
     this.nodes.delete(id);
-    p.orphans.push(...n.spends);
-    if (n.spends.length) this.graveyard.set(id, { parent: p.id, spends: n.spends });
+    // own spends AND spends of already-removed grandchildren stay in the ancestors
+    p.orphans.push(...n.spends, ...n.orphans);
+    if (n.spends.length || n.orphans.length) this.graveyard.set(id, { parent: p.id, spends: n.spends, orphans: n.orphans });
     this.onConfig?.({ kind: "removed", id, cap: n.cap, ts: new Date(now).toISOString() });
   }
 

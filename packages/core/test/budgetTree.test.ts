@@ -185,4 +185,33 @@ describe("BudgetTree", () => {
     expect(b.spentInWindow("user")).toBe(0n);
     expect((b as unknown as { nodes: Map<string, { spends: unknown[] }> }).nodes.get("a")!.spends).toHaveLength(0);
   });
+
+  it("removing a parent after its child keeps the child's spends in the ancestors (Primo's case)", () => {
+    const { b, tick } = setup(10n * U);
+    b.allocate("user", "team", 6n * U);
+    b.allocate("team", "bot", 5n * U);
+    b.spend("bot", "USDC", 5n * U, np());
+    b.remove("bot");
+    b.remove("team");
+    expect(b.available("user")).toBe(5n * U);
+    expect(reasonOf(() => b.spend("user", "USDC", 6n * U, np()))).toBe("OverBudget");
+    // team comes back: its orphan history comes with it, bot still cannot reset its limit
+    b.allocate("user", "team", 6n * U);
+    expect(b.available("team")).toBe(1n * U);
+    b.allocate("team", "bot", 5n * U);
+    expect(b.available("bot")).toBe(0n);
+    expect(b.spentInWindow("user")).toBe(5n * U);
+    tick(DAY + 1);
+    expect(b.available("bot")).toBe(5n * U);
+  });
+
+  it("remove of root, of a node with children, or unknown -> blocked event", () => {
+    const { b, events } = setup();
+    b.allocate("user", "team", 6n * U);
+    b.allocate("team", "bot", 1n * U);
+    expect(reasonOf(() => b.remove("user"))).toBe("CannotRemove");
+    expect(reasonOf(() => b.remove("team"))).toBe("CannotRemove");
+    expect(reasonOf(() => b.remove("nope"))).toBe("UnknownBudget");
+    expect(events.filter((e) => e.kind === "blocked").map((e) => e.reason)).toEqual(["CannotRemove", "CannotRemove", "UnknownBudget"]);
+  });
 });
