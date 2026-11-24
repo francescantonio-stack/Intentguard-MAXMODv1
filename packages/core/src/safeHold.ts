@@ -45,6 +45,8 @@ export const SAFE_HOLD_DEFAULTS: Readonly<SafeHoldConfig> = Object.freeze({
 const num = (x: unknown): x is number => typeof x === "number" && Number.isFinite(x);
 
 export function evaluateSafeHold(input: SafeHoldInput = {}): SafeHoldResult {
+  if (typeof input !== "object" || input === null || Array.isArray(input))
+    return { decision: "HOLD", reasons: [{ code: "BAD_INPUT", detail: "input is not an object" }], checkedAt: Date.now() };
   const now = input.now ?? Date.now();
   const hold = (code: SafeHoldCode, detail: string): SafeHoldResult => ({ decision: "HOLD", reasons: [{ code, detail }], checkedAt: now });
   if (!num(now)) return hold("BAD_NOW", "current time is not valid");
@@ -53,7 +55,9 @@ export function evaluateSafeHold(input: SafeHoldInput = {}): SafeHoldResult {
   if (!Array.isArray(observations)) return hold("MALFORMED", "observations is not a list");
   if (!Array.isArray(required) || !required.every((k) => typeof k === "string"))
     return hold("NO_REQUIRED", "required must be a list of strings");
-  const cfg: SafeHoldConfig = { ...SAFE_HOLD_DEFAULTS, ...(input.config && typeof input.config === "object" ? input.config : {}) };
+  if (input.config !== undefined && (typeof input.config !== "object" || input.config === null || Array.isArray(input.config)))
+    return hold("BAD_CONFIG", "config is not an object");
+  const cfg: SafeHoldConfig = { ...SAFE_HOLD_DEFAULTS, ...(input.config ?? {}) };
   for (const k of Object.keys(SAFE_HOLD_DEFAULTS) as Array<keyof SafeHoldConfig>) {
     const v = cfg[k];
     if (!num(v) || v <= 0) return hold("BAD_CONFIG", `config.${k} must be finite and > 0`);

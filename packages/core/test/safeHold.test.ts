@@ -8,6 +8,11 @@ const obs = (o: Partial<Observation> = {}): Observation => ({ key: "price:MON/US
 const codes = (r: { reasons: { code: string }[] }) => r.reasons.map((x) => x.code).sort();
 
 describe("evaluateSafeHold", () => {
+
+  it("null, array or non-object input -> HOLD BAD_INPUT, no crash; config not an object -> BAD_CONFIG", () => {
+    for (const bad of [null, 5, "x", []]) expect(codes(evaluateSafeHold(bad as never))).toEqual(["BAD_INPUT"]);
+    for (const config of [null, 5, "x", []]) expect(codes(evaluateSafeHold({ now: NOW, required: ["price:MON/USDC"], observations: [obs()], config: config as never }))).toEqual(["BAD_CONFIG"]);
+  });
   it("fresh and consistent -> PROCEED", () => {
     const r = evaluateSafeHold({ now: NOW, required: ["price:MON/USDC"], observations: [obs(), obs({ source: "b", value: 0.501 })] });
     expect(r.decision).toBe("PROCEED");
