@@ -2,7 +2,7 @@
  * Child budgets carved from a parent budget (Sumplus idea).
  * - Each child gets a FIXED cap reserved from its parent: children caps + what the parent already spent
  *   outside its children (own spends + spends of removed children) never exceed the parent cap.
- * - Every spend is checked against a rolling window (default 24 h) at the node AND at every ancestor.
+ * - Every spend is checked against a rolling window (default 24 h, max 7 days) at the node AND at every ancestor.
  * - The parent may spend directly only from what is not reserved for its children.
  * - Removing a child keeps its spends in the ancestors ("orphan" spends); re-creating the same id under the
  *   same parent gets its history back, so the 24 h limit cannot be reset.
@@ -32,7 +32,7 @@ interface Node {
 }
 
 export interface BudgetTreeConfig {
-  windowMs?: number; // default 24 h
+  windowMs?: number; // default 24 h, max 7 days (above = BadConfig)
   now?: () => number;
   onEvent?: (e: QueueEvent) => void;
   onConfig?: (e: BudgetConfigEvent) => void;
@@ -40,6 +40,8 @@ export interface BudgetTreeConfig {
 
 const ZERO_PLAN = `0x${"0".repeat(64)}` as `0x${string}`;
 const PLAN_RE = /^0x[0-9a-fA-F]{64}$/;
+/** Cap fixed by the review: a window above 7 days is a config error, never accepted silently. */
+export const MAX_BUDGET_WINDOW_MS = 604_800_000;
 const isNonNeg = (x: unknown): x is bigint => typeof x === "bigint" && x >= 0n;
 
 export class BudgetTreeBlocked extends Error {
@@ -52,28 +54,44 @@ export class BudgetTree {
   private nodes = new Map<string, Node>();
   /** removed ids -> parent, own spends and orphans, to give the history back if the id returns */
   private graveyard = new Map<string, { parent: string; spends: Spend[]; orphans: Spend[] }>();
-  private readonly windowMs: number;
-  private readonly nowFn: () => number;
+  private readonly windowMs: number = 86_400_000;
+  private readonly nowFn: () => number = () => Date.now();
   private readonly onEvent?: (e: QueueEvent) => void;
   private readonly onConfig?: (e: BudgetConfigEvent) => void;
   private lastNow = -Infinity;
+  /** Bad constructor input: the tree is dead, every call blocks with this reason (fail-closed). */
+  private readonly dead: BudgetBlockReason | null = null;
 
+  /** Never throws: bad input emits exactly one `blocked` event and leaves a dead tree (no root node). */
   constructor(rootId: string, token: string, cap: bigint, cfg: BudgetTreeConfig = {}) {
-    // sinks first, so a bad constructor input still leaves a `blocked` event in the log before the throw
-    const c = (typeof cfg === "object" && cfg !== null ? cfg : {}) as BudgetTreeConfig;
-    this.onEvent = typeof c.onEvent === "function" ? c.onEvent : undefined;
-    this.onConfig = typeof c.onConfig === "function" ? c.onConfig : undefined;
-    this.windowMs = c.windowMs === undefined ? 86_400_000 : (c.windowMs as number); // null/junk is not "missing"
-    this.nowFn = typeof c.now === "function" ? c.now : () => Date.now();
-    if (cfg !== c) this.block("BadConfig", "config must be an object", null, cap);
-    if (c.onEvent !== undefined && typeof c.onEvent !== "function") this.block("BadConfig", "onEvent must be a function", null, cap);
-    if (c.onConfig !== undefined && typeof c.onConfig !== "function") this.block("BadConfig", "onConfig must be a function", null, cap);
-    if (!(typeof this.windowMs === "number" && Number.isFinite(this.windowMs) && this.windowMs > 0)) this.block("BadConfig", "windowMs must be finite and > 0", null, cap);
-    if (c.now !== undefined && typeof c.now !== "function") this.block("BadConfig", "now must be a function", null, cap);
-    if (typeof rootId !== "string" || !rootId) this.block("UnknownBudget", "root id required", null, cap);
-    if (typeof token !== "string" || !token.trim()) this.block("BadToken", "token required", rootId, cap);
-    if (!isNonNeg(cap)) this.block("BadCap", "cap must be a non-negative bigint", rootId, cap);
-    this.nodes.set(rootId, { id: rootId, parent: null, cap, token: token.toUpperCase(), spends: [], orphans: [], children: new Set() });
+    const isObj = typeof cfg === "object" && cfg !== null;
+    const c = (isObj ? cfg : {}) as BudgetTreeConfig;
+    // sinks first, so a bad constructor input still leaves a `blocked` event in the log
+    if (typeof c.onEvent === "function") this.onEvent = c.onEvent;
+    if (typeof c.onConfig === "function") this.onConfig = c.onConfig;
+    const windowMs = c.windowMs === undefined ? 86_400_000 : (c.windowMs as unknown); // null/junk is not "missing"
+    let bad: BudgetBlockReason | null = null;
+    if (!isObj) bad = "BadConfig";
+    else if (c.onEvent !== undefined && typeof c.onEvent !== "function") bad = "BadConfig";
+    else if (c.onConfig !== undefined && typeof c.onConfig !== "function") bad = "BadConfig";
+    else if (!(typeof windowMs === "number" && Number.isFinite(windowMs) && windowMs > 0 && windowMs <= MAX_BUDGET_WINDOW_MS)) bad = "BadConfig";
+    else if (c.now !== undefined && typeof c.now !== "function") bad = "BadConfig";
+    else if (typeof rootId !== "string" || !rootId) bad = "UnknownBudget";
+    else if (typeof token !== "string" || !token.trim()) bad = "BadToken";
+    else if (!isNonNeg(cap)) bad = "BadCap";
+    if (bad) {
+      this.dead = bad;
+      this.emitBlocked(bad, bad === "BadConfig" || bad === "UnknownBudget" ? null : rootId, cap);
+      return;
+    }
+    this.windowMs = windowMs as number;
+    if (c.now) this.nowFn = c.now;
+    this.nodes.set(rootId, { id: rootId, parent: null, cap, token: token.trim().toUpperCase(), spends: [], orphans: [], children: new Set() });
+  }
+
+  /** Dead tree: block (event + throw) with the constructor's reason. */
+  private deadCheck(node: unknown, amount: unknown, planId?: unknown): void {
+    if (this.dead) this.block(this.dead, "budget tree disabled: bad constructor input", typeof node === "string" ? node : null, amount, planId);
   }
 
   /** Current time, or null if not finite / went backwards (then everything is blocked). */
@@ -86,6 +104,11 @@ export class BudgetTree {
   }
 
   private block(reason: BudgetBlockReason, detail: string, node: string | null, amount: unknown, planId?: unknown): never {
+    this.emitBlocked(reason, node, amount, planId);
+    throw new BudgetTreeBlocked(reason, detail);
+  }
+
+  private emitBlocked(reason: BudgetBlockReason, node: string | null, amount: unknown, planId?: unknown): void {
     const t = this.lastNow;
     this.onEvent?.({
       kind: "blocked",
@@ -95,7 +118,6 @@ export class BudgetTree {
       ts: Number.isFinite(t) ? new Date(t).toISOString() : new Date(0).toISOString(),
       id: node,
     });
-    throw new BudgetTreeBlocked(reason, detail);
   }
 
   private nowOrBlock(node: string | null, amount: unknown, planId?: unknown): number {
@@ -148,6 +170,7 @@ export class BudgetTree {
   }
 
   spentInWindow(id: string): bigint {
+    this.deadCheck(id, 0n);
     const now = this.nowOrBlock(id, 0n);
     this.prune(now);
     if (!this.nodes.has(id)) this.block("UnknownBudget", `unknown budget ${id}`, id, 0n);
@@ -155,6 +178,7 @@ export class BudgetTree {
   }
 
   available(id: string): bigint {
+    this.deadCheck(id, 0n);
     const now = this.nowOrBlock(id, 0n);
     this.prune(now);
     if (!this.nodes.has(id)) this.block("UnknownBudget", `unknown budget ${id}`, id, 0n);
@@ -163,6 +187,7 @@ export class BudgetTree {
 
   /** Reserve a fixed child budget. Children caps + parent's non-child spends must fit the parent cap. */
   allocate(parentId: string, childId: string, cap: bigint): void {
+    this.deadCheck(childId, cap);
     const now = this.nowOrBlock(childId, cap);
     this.prune(now);
     if (!isNonNeg(cap)) this.block("BadCap", "cap must be a non-negative bigint", childId, cap);
@@ -188,6 +213,7 @@ export class BudgetTree {
 
   /** Change a cap. Growing must fit the parent (incl. its spends); shrinking must still cover its children. */
   resize(id: string, cap: bigint): void {
+    this.deadCheck(id, cap);
     const now = this.nowOrBlock(id, cap);
     this.prune(now);
     if (!isNonNeg(cap)) this.block("BadCap", "cap must be a non-negative bigint", id, cap);
@@ -204,6 +230,7 @@ export class BudgetTree {
 
   /** Remove a leaf child; its spends stay in the ancestors until they leave the window. */
   remove(id: string): void {
+    this.deadCheck(id, 0n);
     const now = this.nowOrBlock(id, 0n);
     this.prune(now);
     if (!this.nodes.has(id)) this.block("UnknownBudget", `unknown budget ${id}`, id, 0n);
@@ -224,7 +251,8 @@ export class BudgetTree {
     if (typeof amount !== "bigint" || amount <= 0n) return { ok: false, reason: "BadAmount", detail: "amount must be a positive bigint" };
     const n = this.nodes.get(id);
     if (!n) return { ok: false, reason: "UnknownBudget", detail: `unknown budget ${id}` };
-    if (typeof token !== "string" || n.token !== token.toUpperCase()) return { ok: false, reason: "WrongToken", detail: `budget is ${n.token}` };
+    if (typeof token !== "string" || !token.trim()) return { ok: false, reason: "BadToken", detail: "token required" };
+    if (n.token !== token.trim().toUpperCase()) return { ok: false, reason: "WrongToken", detail: `budget is ${n.token}` };
     const avail = this.availableAt(n);
     if (amount > avail) return { ok: false, reason: "OverBudget", detail: `asked ${amount}, available ${avail}` };
     return { ok: true };
@@ -232,6 +260,10 @@ export class BudgetTree {
 
   /** Read-only check; never writes. A bad clock is a block (not ok). */
   canSpend(id: string, token: string, amount: bigint, planId: string): { ok: boolean; reason?: BudgetBlockReason } {
+    if (this.dead) {
+      this.emitBlocked(this.dead, typeof id === "string" ? id : null, amount, planId);
+      return { ok: false, reason: this.dead };
+    }
     const now = this.now();
     if (now === null) return { ok: false, reason: "BadNow" };
     this.prune(now);
@@ -241,6 +273,7 @@ export class BudgetTree {
 
   /** Records the spend only if allowed; otherwise emits one `blocked` QueueEvent and throws. */
   spend(id: string, token: string, amount: bigint, planId: string): void {
+    this.deadCheck(id, amount, planId);
     const now = this.nowOrBlock(id, amount, planId);
     this.prune(now);
     const r = this.check(id, token, amount, planId);

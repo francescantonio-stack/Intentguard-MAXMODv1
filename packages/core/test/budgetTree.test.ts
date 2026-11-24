@@ -172,9 +172,10 @@ describe("BudgetTree", () => {
     expect(reasonOf(() => b.allocate("user", "a", 1n))).toBe("DuplicateId");
     expect(reasonOf(() => b.allocate("ghost", "q", 1n))).toBe("UnknownBudget");
     expect(() => b.remove("user")).toThrow(/root/);
-    expect(() => new BudgetTree("u", "USDC", 1n, { windowMs: Number.NaN })).toThrow(/windowMs/);
-    expect(() => new BudgetTree("u", "USDC", 1n, { windowMs: Infinity })).toThrow(/windowMs/);
-    expect(() => new BudgetTree("u", "", 1n)).toThrow(/token/);
+    expect(() => new BudgetTree("u", "USDC", 1n, { windowMs: Number.NaN })).not.toThrow(); // dead tree, BadConfig event (see below)
+    expect(reasonOf(() => new BudgetTree("u", "USDC", 1n, { windowMs: Number.NaN }).available("u"))).toBe("BadConfig");
+    expect(reasonOf(() => new BudgetTree("u", "USDC", 1n, { windowMs: Infinity }).available("u"))).toBe("BadConfig");
+    expect(reasonOf(() => new BudgetTree("u", "", 1n).available("u"))).toBe("BadToken");
   });
 
   it("old spends are pruned from memory", () => {
@@ -222,24 +223,62 @@ describe("BudgetTree", () => {
     expect(events.map((e) => [e.kind, e.reason, e.id])).toEqual([["blocked", "UnknownBudget", "ghost"], ["blocked", "UnknownBudget", "ghost"]]);
   });
 
-  it("bad constructor input -> blocked event first, then throw (QC fail-closed suite)", () => {
-    const cases: Array<[() => unknown[], string]> = [
-      [() => ["root", null, 10n], "BadToken"], [() => ["root", " ", 10n], "BadToken"],
-      [() => ["root", "USDC", -1n], "BadCap"], [() => ["root", "USDC", 10], "BadCap"],
-      [() => ["", "USDC", 10n], "UnknownBudget"],
+  it("bad constructor input -> no throw, one blocked event, then every op blocks with the same reason (QC fail-closed suite)", () => {
+    const cases: Array<[unknown[], object, string]> = [
+      [["root", null, 10n], {}, "BadToken"], [["root", " ", 10n], {}, "BadToken"],
+      [["root", "USDC", -1n], {}, "BadCap"], [["root", "USDC", 10], {}, "BadCap"],
+      [["", "USDC", 10n], {}, "UnknownBudget"],
+      [["root", "USDC", 10n], { windowMs: null }, "BadConfig"], [["root", "USDC", 10n], { windowMs: 0 }, "BadConfig"],
+      [["root", "USDC", 10n], { now: 5 }, "BadConfig"], [["root", "USDC", 10n], { onConfig: "x" }, "BadConfig"],
     ];
-    for (const [args, reason] of cases) {
+    for (const [[r, tk, cap], extra, reason] of cases) {
       const ev: QueueEvent[] = [];
-      const [r, tk, cap] = args();
-      expect(() => new BudgetTree(r as never, tk as never, cap as never, { onEvent: (e) => ev.push(e) })).toThrow(reason);
+      let b!: BudgetTree;
+      expect(() => { b = new BudgetTree(r as never, tk as never, cap as never, { now: () => 1_000, ...extra, onEvent: (e: QueueEvent) => ev.push(e) } as never); }).not.toThrow();
       expect(ev).toHaveLength(1);
       expect(ev[0]).toMatchObject({ kind: "blocked", reason });
+      // dead tree: never spendable, every op blocks with the same reason
+      expect(reasonOf(() => b.spend("root", "USDC", 1n, np()))).toBe(reason);
+      expect(reasonOf(() => b.available("root"))).toBe(reason);
+      expect(reasonOf(() => b.spentInWindow("root"))).toBe(reason);
+      expect(reasonOf(() => b.allocate("root", "kid", 1n))).toBe(reason);
+      expect(reasonOf(() => b.resize("root", 1n))).toBe(reason);
+      expect(reasonOf(() => b.remove("kid"))).toBe(reason);
+      expect(b.canSpend("root", "USDC", 1n, np())).toEqual({ ok: false, reason });
+      expect(ev).toHaveLength(8);
+      expect(ev.every((e) => e.kind === "blocked" && e.reason === reason)).toBe(true);
     }
-    for (const bad of [{ windowMs: null }, { windowMs: 0 }, { now: 5 }]) {
+    // cfg not an object: no sink, still no throw and dead
+    const b = new BudgetTree("root", "USDC", 10n, null as never);
+    expect(reasonOf(() => b.available("root"))).toBe("BadConfig");
+  });
+
+  it("window cap: 7 days ok, 7 days + 1 and 8 days -> BadConfig (no throw, dead)", () => {
+    const ok: QueueEvent[] = [];
+    const b = new BudgetTree("root", "USDC", 10n, { windowMs: 604_800_000, now: () => 1_000, onEvent: (e) => ok.push(e) });
+    expect(ok).toEqual([]);
+    b.spend("root", "USDC", 1n, np());
+    expect(b.available("root")).toBe(9n);
+    for (const w of [604_800_001, 8 * DAY, Infinity]) {
       const ev: QueueEvent[] = [];
-      expect(() => new BudgetTree("root", "USDC", 10n, { ...(bad as object), onEvent: (e: QueueEvent) => ev.push(e) })).toThrow("BadConfig");
-      expect(ev[0]).toMatchObject({ kind: "blocked", reason: "BadConfig" });
+      const d = new BudgetTree("root", "USDC", 10n, { windowMs: w, now: () => 1_000, onEvent: (e) => ev.push(e) });
+      expect(ev).toEqual([expect.objectContaining({ kind: "blocked", reason: "BadConfig", id: null })]);
+      expect(reasonOf(() => d.spend("root", "USDC", 1n, np()))).toBe("BadConfig");
     }
-    expect(() => new BudgetTree("root", "USDC", 10n, null as never)).toThrow("BadConfig");
+  });
+
+  it("tokens are trimmed: ' usdc ' root and spends match USDC; blank token = BadToken", () => {
+    const ev: QueueEvent[] = [];
+    const b = new BudgetTree("root", " usdc ", 10n, { now: () => 1_000, onEvent: (e) => ev.push(e) });
+    expect(ev).toEqual([]);
+    b.allocate("root", "kid", 5n);
+    b.spend("kid", " usdc ", 1n, np());
+    b.spend("root", "USDC", 1n, np());
+    expect(b.canSpend("kid", "\tUsdc ", 1n, np())).toEqual({ ok: true });
+    expect(reasonOf(() => b.spend("kid", "  ", 1n, np()))).toBe("BadToken");
+    expect(ev.at(-1)).toMatchObject({ kind: "blocked", reason: "BadToken", id: "kid" });
+    expect(b.canSpend("kid", null as never, 1n, np())).toEqual({ ok: false, reason: "BadToken" });
+    expect(reasonOf(() => b.spend("kid", "USDT", 1n, np()))).toBe("WrongToken");
+    expect(b.spentInWindow("root")).toBe(2n);
   });
 });
