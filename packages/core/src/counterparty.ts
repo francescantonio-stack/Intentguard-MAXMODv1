@@ -2,7 +2,7 @@ import { isAddress, type Address, type Hex } from "viem";
 import type { QueueEvent } from "./events";
 import { asAmount as asAmountGuard, blockedEvent, lowerAddress, lowerPlanId, upperToken } from "./guards";
 import { redactSecrets } from "./redact";
-import { tightenNumber } from "./limits";
+import { isConfigObject, tightenNumber } from "./limits";
 
 /**
  * Counterparty check before paying (idea: Reins). Read-only: eth_getCode plus local lists.
@@ -163,7 +163,7 @@ export async function checkCounterparty(input: CounterpartyInput | null | undefi
       findings.push({ code: "SimUnavailable", severity: "blocked", detail: "indirizzo destinatario mancante o non valido" });
       return emit("SimUnavailable");
     }
-    if (input.config !== undefined && (input.config == null || typeof input.config !== "object" || Array.isArray(input.config))) {
+    if (input.config !== undefined && input.config !== null && !isConfigObject(input.config)) {
       findings.push({ code: "BadConfig", severity: "blocked", detail: "config non valida" });
       return emit("BadConfig", { address });
     }
