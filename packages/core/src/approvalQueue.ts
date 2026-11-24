@@ -6,7 +6,7 @@
  * Anti-splitting: auto-approvals are summed over a rolling window, so ten payments of 0.9 cannot
  * slip under a threshold of 1.
  * Every decision (auto, approved) expires after `ttlMs`, like pending items.
- * Normalization: token UPPERCASE, planId and approvers lowercase.
+ * Normalization: token trimmed + UPPERCASE (blank = BadToken), planId and approvers lowercase.
  */
 import type { QueueEvent } from "./events";
 
@@ -78,6 +78,8 @@ export class ApprovalQueue {
   private readonly onEvent?: (e: QueueEvent) => void;
   /** Bad config: the queue is dead and never authorises anything (fail-closed). */
   private readonly dead: boolean = false;
+  /** Reason of the dead mode: BadConfig, or BadToken for a blank threshold token. */
+  private readonly deadReason: QueueBlockReason = "BadConfig";
   /** time of the current operation (checked once per public call) */
   private t = 0;
   private lastNow = -Infinity;
@@ -101,7 +103,9 @@ export class ApprovalQueue {
       const thresholds = new Map<string, bigint>();
       for (const [k, v] of Object.entries(th)) {
         if (typeof v !== "bigint" || v < 0n) throw new Error("threshold");
-        thresholds.set(k.trim().toUpperCase(), v);
+        const tk = k.trim().toUpperCase();
+        if (!tk) { this.deadReason = "BadToken"; throw new Error("token"); }
+        thresholds.set(tk, v);
       }
       let approvers: Set<string> | undefined;
       if (c.approvers !== undefined) {
@@ -116,19 +120,19 @@ export class ApprovalQueue {
       if (c.now) this.now = c.now;
     } catch {
       this.dead = true;
-      this.emit("blocked", null, 0n, null, "BadConfig");
+      this.emit("blocked", null, 0n, null, this.deadReason);
     }
   }
 
   /** Dead queue: one blocked BadConfig event per call. */
   private deadBlock(planId: unknown, amount: unknown, id: string | null): boolean {
     if (!this.dead) return false;
-    this.emit("blocked", planId, amount, id, "BadConfig");
+    this.emit("blocked", planId, amount, id, this.deadReason);
     return true;
   }
 
   private throwIfDead(planId: unknown, amount: unknown, id: string | null): void {
-    if (this.deadBlock(planId, amount, id)) throw new Error("blocked: BadConfig");
+    if (this.deadBlock(planId, amount, id)) throw new Error(`blocked: ${this.deadReason}`);
   }
 
   private emit(kind: QueueEvent["kind"], planId: unknown, amount: unknown, id: string | null, reason = "") {
@@ -180,7 +184,7 @@ export class ApprovalQueue {
   }
 
   private autoSpentNow(token: string): bigint {
-    const t = String(token).toUpperCase();
+    const t = typeof token === "string" ? token.trim().toUpperCase() : "";
     const from = this.t - this.windowMs;
     let s = 0n;
     for (const id of this.items.keys()) {
@@ -206,7 +210,7 @@ export class ApprovalQueue {
       this.emit("blocked", planId, amt, null, reason);
       return null;
     };
-    if (this.dead) return bad("BadConfig");
+    if (this.dead) return bad(this.deadReason);
     if (!isObj) return bad("BadInput");
     if (typeof amt !== "bigint" || amt <= 0n) return bad("BadAmount");
     const planId = typeof r.planId === "string" ? r.planId.trim().toLowerCase() : "";
@@ -289,7 +293,7 @@ export class ApprovalQueue {
       this.emit("blocked", p, amt, itemId, reason);
       throw new Error(`blocked: ${reason}`);
     };
-    if (this.dead) return block("BadConfig", blockAmt, null);
+    if (this.dead) return block(this.deadReason, blockAmt, null);
     if (!this.clock()) return block("BadNow", blockAmt, id ?? null);
     if (!id) return block(this.seen.has(p) ? BLOCK_OF[this.seen.get(p)!] : "NotInQueue", blockAmt, null);
     const it = this.live(id);
