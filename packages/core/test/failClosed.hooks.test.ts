@@ -2,7 +2,7 @@ import { describeFailClosed, moduleExists } from "./describeFailClosed";
 import { maxUint256, type Address, type Hex } from "viem";
 import { simulateTx, SIM_DEFAULTS, type SimClient, type SimOptions, type ProposedTx } from "../src/simulate";
 import { checkCounterparty, COUNTERPARTY_DEFAULTS, type CodeClient } from "../src/counterparty";
-import { probeNetworks, PROBE_DEFAULTS, type JsonRpc, type ProbeNetwork } from "../src/probe";
+import { probeNetworks, PROBE_MAX, type JsonRpc, type ProbeNetwork } from "../src/probe";
 import { redactWithConfig } from "../src/redact";
 
 const FROM = "0xd2FE6a3Ae252D6fb2f604805898177c8FdaAa24B" as Address;
@@ -71,6 +71,7 @@ describeFailClosed<CpIn, Awaited<ReturnType<typeof checkCounterparty>>>({
   configs: ["config"],
   limits: [{ path: "lookalikeChars", widen: COUNTERPARTY_DEFAULTS.lookalikeChars + 1 }],
   allowNumericString: ["amount"],
+  nullIsDefault: ["lookalikeChars"],
 });
 
 type ProbeIn = { ids?: string[]; now?: number; config?: { timeoutMs?: unknown } };
@@ -84,7 +85,8 @@ describeFailClosed<ProbeIn, Awaited<ReturnType<typeof probeNetworks>>>({
   },
   isBlocked: (rows) => Array.isArray(rows) && rows.length > 0 && rows.every((r) => r.ok === false),
   configs: ["config"],
-  limits: [{ path: "config.timeoutMs", widen: PROBE_DEFAULTS.timeoutMs + 1 }],
+  limits: [{ path: "config.timeoutMs", widen: PROBE_MAX.timeoutMs + 1 }],
+  bareInputs: [null, 0, "x"],
 });
 
 const PK = "0x" + "ab".repeat(32);

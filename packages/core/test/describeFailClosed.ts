@@ -25,8 +25,12 @@ export type FailClosedSpec<I, R> = {
   extra?: Array<{ name: string; input: () => unknown }>;
   /** If false, skip the "null/undefined/0/'x' input" cases (e.g. redact). Default true. */
   rejectBare?: boolean;
+  /** Override the bare-input cases. Default: null, undefined, 0, "x". */
+  bareInputs?: unknown[];
   /** Fields that may accept a numeric string (JSON). The "1" mutation is skipped for these. */
   allowNumericString?: string[];
+  /** Optional fields where null means "use the default" (not a block). */
+  nullIsDefault?: string[];
 };
 
 
@@ -95,10 +99,10 @@ export function describeFailClosed<I extends object, R>(spec: FailClosedSpec<I, 
 
     if (spec.rejectBare !== false) {
       it("input null o non oggetto blocca, senza crash", async () => {
-        await assertBlocked(null, "null");
-        await assertBlocked(undefined, "undefined");
-        await assertBlocked(0, "0");
-        await assertBlocked("x", '"x"');
+        const bare = spec.bareInputs ?? [null, undefined, 0, "x"];
+        for (const value of bare) {
+          await assertBlocked(value, String(value));
+        }
       });
     }
 
@@ -122,6 +126,7 @@ export function describeFailClosed<I extends object, R>(spec: FailClosedSpec<I, 
       for (const m of NUMERIC_MUTATIONS) {
         if (amount && m.skipAmount) continue;
         if ((spec.allowNumericString ?? []).includes(path) && m.name.startsWith("stringa")) continue;
+        if ((spec.nullIsDefault ?? []).includes(path) && m.name === "null") continue;
         it(`${path} = ${m.name} → blocco`, async () => {
           await assertBlocked(setPath(cloneData(spec.valid()), path, m.value), `${path}=${m.name}`);
         });
@@ -130,7 +135,8 @@ export function describeFailClosed<I extends object, R>(spec: FailClosedSpec<I, 
 
     for (const path of spec.configs ?? []) {
       it(`${path} non valida → blocco`, async () => {
-        for (const value of [null, "x", 1, []]) {
+        // null uses the module default (Primo); only a non-object config is invalid.
+        for (const value of ["x", 1, []]) {
           await assertBlocked(setPath(cloneData(spec.valid()), path, value), `${path}=${String(value)}`);
         }
       });
