@@ -16,3 +16,4 @@ export * from "./events";
 export * from "./guards";
 export * from "./limits";
 export * from "./counterparty";
+export * from "./verifyOffline";
