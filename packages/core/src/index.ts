@@ -9,3 +9,4 @@ export * from "./webauthn";
 export * from "./describe";
 export * from "./events";
 export * from "./approvalQueue";
+export * from "./mcpScan";
