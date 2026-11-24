@@ -85,8 +85,21 @@ function parsePlan(raw: unknown): { ok: true; plan: ExecutorPlan; chainId: numbe
 
 function parseIsoMs(ts: unknown): number | null {
   if (typeof ts !== "string" || !ISO_RE.test(ts)) return null;
+  const m = ts.match(/^(\d{4})-(\d{2})-(\d{2})T(\d{2}):(\d{2}):(\d{2})(?:\.\d+)?(Z|[+-]\d{2}:\d{2})$/);
+  if (!m) return null;
   const ms = Date.parse(ts);
-  return Number.isFinite(ms) ? ms : null;
+  if (!Number.isFinite(ms)) return null;
+  const off = m[7]!;
+  const offsetMin = off === "Z"
+    ? 0
+    : (off[0] === "-" ? -1 : 1) * (Number(off.slice(1, 3)) * 60 + Number(off.slice(4, 6)));
+  // Wall-clock components in the declared offset must match the written date (no overflow like 02-31 → 03-03).
+  const wall = new Date(ms + offsetMin * 60_000);
+  const pad = (n: number) => String(n).padStart(2, "0");
+  const rebuilt = `${wall.getUTCFullYear()}-${pad(wall.getUTCMonth() + 1)}-${pad(wall.getUTCDate())}T${pad(wall.getUTCHours())}:${pad(wall.getUTCMinutes())}:${pad(wall.getUTCSeconds())}`;
+  const written = `${m[1]}-${m[2]}-${m[3]}T${m[4]}:${m[5]}:${m[6]}`;
+  if (rebuilt !== written) return null;
+  return ms;
 }
 
 /**
@@ -136,6 +149,9 @@ export function verifyOffline(input: unknown): VerifyReport {
           const a = parseJsonAmount(o.amount);
           if (a === null) {
             fail(checks, "amount", "amount non è un bigint >= 0");
+          } else if (a !== parsed.plan.amountIn) {
+            fail(checks, "amount", `amount ${a} ≠ plan.amountIn ${parsed.plan.amountIn}`);
+            planAmount = parsed.plan.amountIn;
           } else {
             planAmount = a;
             pass(checks, "plan");

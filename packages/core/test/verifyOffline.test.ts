@@ -80,6 +80,15 @@ describe("verifyOffline planHash", () => {
     const junk = verifyOffline(null);
     expect(junk.ok).toBe(false);
   });
+
+  it("fails when the top-level amount differs from plan.amountIn", () => {
+    const r = verifyOffline({ ...planJson, amount: "7" });
+    expect(r.ok).toBe(false);
+    expect(r.checks.find((c) => c.name === "amount")?.ok).toBe(false);
+    expect(r.checks.find((c) => c.name === "amount")?.reason).toMatch(/amountIn/);
+    const same = verifyOffline({ ...planJson, amount: "1000000" });
+    expect(same.ok).toBe(true);
+  });
 });
 
 describe("verifyOffline receipts", () => {
@@ -137,6 +146,17 @@ describe("verifyOffline receipts", () => {
     const iso = verifyOffline({ ...planJson, events: [ev({ ts: "not-iso" })] });
     expect(iso.ok).toBe(false);
     expect(iso.checks.some((c) => c.reason?.includes("ISO"))).toBe(true);
+  });
+
+  it("rejects impossible calendar dates and accepts a leap day", () => {
+    const overflow = verifyOffline({ ...planJson, events: [ev({ ts: "2026-02-31T00:00:00.000Z" })] });
+    expect(overflow.ok).toBe(false);
+    expect(overflow.checks.some((c) => (c.reason ?? "").includes("ISO"))).toBe(true);
+    const nonLeap = verifyOffline({ ...planJson, events: [ev({ ts: "2026-02-29T06:00:00.000Z" })] });
+    expect(nonLeap.ok).toBe(false);
+    expect(nonLeap.checks.some((c) => (c.reason ?? "").includes("ISO"))).toBe(true);
+    const leap = verifyOffline({ ...planJson, events: [ev({ ts: "2028-02-29T06:00:00.000Z" })] });
+    expect(leap.ok, formatReport(leap)).toBe(true);
   });
 
   it("fails closed on a missing or invalid event field", () => {
@@ -199,6 +219,17 @@ describe("scripts/verify.mjs CLI", () => {
     expect(bad.status, bad.stderr + bad.stdout).toBe(1);
     expect(bad.stdout).toMatch(/FAIL planHash/);
     expect(bad.stdout).toMatch(/RESULT FAIL/);
+  });
+
+  it("exits 1 with RESULT FAIL and no stack when the path does not exist", () => {
+    const missing = path.join(dir, "no-such-file.json");
+    const r = spawnSync(process.execPath, ["--experimental-strip-types", script, missing], { encoding: "utf8" });
+    expect(r.status, r.stderr + r.stdout).toBe(1);
+    expect(r.stdout).toMatch(/FAIL input: file non trovato/);
+    expect(r.stdout).toMatch(/RESULT FAIL/);
+    expect(r.stderr).not.toMatch(/ENOENT/);
+    expect(r.stdout).not.toMatch(/ENOENT/);
+    expect(r.stderr).not.toMatch(/Error \[?ERR_/);
   });
 
   it("exits 1 when the JSON file is larger than VERIFY_MAX.jsonBytes", () => {

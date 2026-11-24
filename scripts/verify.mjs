@@ -20,17 +20,26 @@ const usage = () => {
   );
 };
 
+const failInput = (reason) => {
+  process.stdout.write(`FAIL input: ${reason}\nRESULT FAIL\n`);
+  process.exit(1);
+};
+
 const load = (file) => {
-  const buf = readFileSync(file);
+  let buf;
+  try {
+    buf = readFileSync(file);
+  } catch (e) {
+    const code = e && typeof e === "object" && "code" in e ? e.code : undefined;
+    failInput(code === "ENOENT" ? `file non trovato (${file})` : (e instanceof Error ? e.message : String(e)));
+  }
   if (buf.byteLength > VERIFY_MAX.jsonBytes) {
-    process.stdout.write(`FAIL input: file oltre il massimo (${buf.byteLength} > ${VERIFY_MAX.jsonBytes} byte)\nRESULT FAIL\n`);
-    process.exit(1);
+    failInput(`file oltre il massimo (${buf.byteLength} > ${VERIFY_MAX.jsonBytes} byte)`);
   }
   try {
     return JSON.parse(buf.toString("utf8"));
   } catch {
-    process.stdout.write("FAIL input: JSON non valido\nRESULT FAIL\n");
-    process.exit(1);
+    failInput("JSON non valido");
   }
 };
 
