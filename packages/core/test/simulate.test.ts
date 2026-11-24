@@ -340,6 +340,20 @@ describe("approval variants are blocked when unlimited or malformed", () => {
       expect(toActionBlocked(r, PLAN)?.reason, sel).toBe("MalformedApproval");
     }
   });
+
+  it("blocks odd-length hex after an approval selector as MalformedApproval; unknown odd hex still blocks", async () => {
+    for (const sel of APPROVAL_SELECTORS) {
+      const odd = (sel + "a") as Hex;
+      const r = await simulateTx(tx({ to: TOKEN, data: odd }), stub({}));
+      expect(r.ok, sel).toBe(false);
+      expect(r.blockReason, sel).toBe("MalformedApproval");
+      expect(toActionBlocked(r, PLAN)?.reason, sel).toBe("MalformedApproval");
+    }
+    const unknown = await simulateTx(tx({ data: "0xdeadbeefa" as Hex }), stub({}));
+    expect(unknown.ok).toBe(false);
+    expect(unknown.blockReason).toBe("SimUnavailable");
+    expect(unknown.revert?.reason).toMatch(/hex valido|BAD_VALUE/);
+  });
 });
 
 describe("RPC errors, balance and planId", () => {
@@ -399,5 +413,24 @@ describe("checkSimulateApiInput", () => {
     expect(noPlan.ok).toBe(true);
     if (noPlan.ok) expect(noPlan.planIdMissing).toBe(true);
     expect(checkSimulateApiInput({ ...base, planId: "0x12" }).ok).toBe(false);
+  });
+
+  it("lets odd-length approval calldata through so /api/simulate can emit MalformedApproval; unknown odd hex is still 400", async () => {
+    for (const sel of APPROVAL_SELECTORS) {
+      const odd = sel + "a";
+      const parsed = checkSimulateApiInput({ ...base, to: TOKEN, data: odd, planId: PLAN });
+      expect(parsed.ok, sel).toBe(true);
+      if (!parsed.ok) continue;
+      const sim = await simulateTx(parsed.tx, stub({}));
+      expect(sim.ok, sel).toBe(false);
+      expect(sim.blockReason, sel).toBe("MalformedApproval");
+      expect(toActionBlocked(sim, parsed.planId)?.reason, sel).toBe("MalformedApproval");
+    }
+    const unknown = checkSimulateApiInput({ ...base, data: "0xdeadbeefa" });
+    expect(unknown.ok).toBe(false);
+    if (!unknown.ok) {
+      expect(unknown.status).toBe(400);
+      expect(unknown.error).toMatch(/hex/);
+    }
   });
 });
