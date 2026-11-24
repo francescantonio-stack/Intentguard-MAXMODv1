@@ -73,19 +73,25 @@ describe("checkCounterparty", () => {
   });
 
   it("is fail-closed: null, bad address, bad now, missing client or RPC error never yield ok", async () => {
-    const cases = await Promise.all([
+    const unavailable = await Promise.all([
       checkCounterparty(null, eoa),
       checkCounterparty({ address: "nope", now: 1 }, eoa),
       checkCounterparty({ address: A, now: NaN }, eoa),
       checkCounterparty({ address: A, now: Infinity }, eoa),
-      checkCounterparty({ address: A, now: 1 }, null),
-      checkCounterparty({ address: A, now: 1, paidBefore: [A] }, boom),
     ]);
-    for (const r of cases) {
+    for (const r of unavailable) {
       expect(r.verdict).toBe("blocked");
       expect(r.event?.kind).toBe("blocked");
       expect(r.event?.reason).toBe("SimUnavailable");
       expect(r.successOddsInput.dryRun[0]!.ok).toBe(false);
+    }
+    const noCode = await Promise.all([
+      checkCounterparty({ address: A, now: 1, paidBefore: [A] }, null),
+      checkCounterparty({ address: A, now: 1, paidBefore: [A] }, boom),
+    ]);
+    for (const r of noCode) {
+      expect(r.verdict).toBe("blocked");
+      expect(r.event?.reason).toBe("CodeUnavailable");
     }
   });
 });
@@ -110,5 +116,54 @@ describe("config limits", () => {
     const tight = await checkCounterparty({ address: fake, paidBefore: [known], lookalikeChars: 2, planId: PLAN, amount: 2n, now: 1 }, eoa);
     expect(tight.verdict).toBe("blocked");
     expect(tight.event?.reason).toBe("LookalikeAddress");
+  });
+});
+
+
+describe("lists, amount, getCode and EIP-7702", () => {
+  it("blocks BadConfig when allowlist or denylist is present but not an array, or has invalid entries", async () => {
+    const cases: Array<Record<string, unknown>> = [
+      { address: A, paidBefore: [A], allowlist: "not-an-array", now: 1, planId: PLAN, amount: 1n },
+      { address: A, paidBefore: [A], denylist: { B }, now: 1, planId: PLAN, amount: 1n },
+      { address: A, paidBefore: [A], allowlist: [A, "nope"], now: 1, planId: PLAN, amount: 1n },
+      { address: A, paidBefore: [A], denylist: [null], now: 1, planId: PLAN, amount: 1n },
+    ];
+    for (const [i, input] of cases.entries()) {
+      const r = await checkCounterparty(input as never, eoa);
+      expect(r.verdict, `case ${i}`).toBe("blocked");
+      expect(r.event?.reason, `case ${i}`).toBe("BadConfig");
+    }
+  });
+
+  it("blocks BadAmount when amount is present but invalid, and does not proceed as 0n", async () => {
+    for (const amount of ["foo", NaN, -1n, null, 1.5, {}] as const) {
+      const r = await checkCounterparty({ address: A, paidBefore: [A], planId: PLAN, amount, now: 1 }, eoa);
+      expect(r.verdict, String(amount)).toBe("blocked");
+      expect(r.event?.reason, String(amount)).toBe("BadAmount");
+    }
+    const ok = await checkCounterparty({ address: A, paidBefore: [A], planId: PLAN, amount: 0n, now: 1 }, eoa);
+    expect(ok.verdict).toBe("ok");
+    expect(ok.event).toBeNull();
+  });
+
+  it("blocks CodeUnavailable when getCode returns undefined or an empty string (not an EOA)", async () => {
+    const undef: CodeClient = { getCode: async () => undefined };
+    const empty: CodeClient = { getCode: async () => "" };
+    for (const client of [undef, empty]) {
+      const r = await checkCounterparty({ address: A, paidBefore: [A], planId: PLAN, amount: 1n, now: 1 }, client);
+      expect(r.verdict).toBe("blocked");
+      expect(r.event?.reason).toBe("CodeUnavailable");
+      expect(r.kind).not.toBe("eoa");
+    }
+  });
+
+  it("treats EIP-7702 code 0xef0100 as a delegated EOA warning, not a plain contract", async () => {
+    const delegated: CodeClient = { getCode: async () => ("0xef0100" + "11".repeat(20)) as `0x${string}` };
+    const r = await checkCounterparty({ address: A, paidBefore: [A], allowlist: [A], planId: PLAN, amount: 1n, now: 1 }, delegated);
+    expect(r.kind).toBe("delegated");
+    expect(r.verdict).toBe("warning");
+    expect(codes(r)).toContain("Delegated7702");
+    expect(codes(r)).not.toContain("CounterpartyContract");
+    expect(r.event).toBeNull();
   });
 });

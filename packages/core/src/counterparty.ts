@@ -8,6 +8,10 @@ import { tightenNumber } from "./limits";
  * Counterparty check before paying (idea: Reins). Read-only: eth_getCode plus local lists.
  * Fail-closed: missing or invalid data never yields verdict "ok".
  * Blocks use the shared QueueEvent (kind "blocked", planId lowercase, amount bigint).
+ *
+ * `blockNew` default is false: a first-time payee is a warning, not a block.
+ * Pass `blockNew: true` to refuse new counterparties.
+ * EIP-7702 code (`0xef0100…`) is a delegated EOA (finding Delegated7702, warning), not a plain contract.
  */
 
 export type CodeClient = { getCode: (a: { address: Address }) => Promise<Hex | undefined | string> };
@@ -24,7 +28,7 @@ export type CounterpartyInput = {
   known?: unknown;
   /** If the allowlist is non-empty, an address not on it is blocked (default: warning). */
   strictAllowlist?: boolean;
-  /** A first-time payee is blocked instead of warned. */
+  /** If true, a first-time payee is blocked. Default: false (warning only). */
   blockNew?: boolean;
   /** Hex chars to match at each end for address-poisoning (default 4). May only tighten (smaller), never widen. */
   lookalikeChars?: unknown;
@@ -45,6 +49,9 @@ export type Finding = {
     | "CounterpartyEoa"
     | "Allowlisted"
     | "NotAllowlisted"
+    | "Delegated7702"
+    | "CodeUnavailable"
+    | "BadAmount"
     | "SimUnavailable"
     | "BadConfig";
   severity: "ok" | "warning" | "blocked";
@@ -54,7 +61,7 @@ export type Finding = {
 export type CounterpartyVerdict = {
   verdict: "ok" | "warning" | "blocked";
   address?: `0x${string}`;
-  kind?: "eoa" | "contract" | "zero" | "unknown";
+  kind?: "eoa" | "contract" | "delegated" | "zero" | "unknown";
   token?: string;
   findings: Finding[];
   event: QueueEvent | null;
@@ -70,16 +77,19 @@ export type CounterpartyVerdict = {
 
 const ZERO = "0x" + "00".repeat(20);
 
-const asAddrList = (x: unknown): `0x${string}`[] => {
-  if (!Array.isArray(x)) return [];
+/** Absent (undefined) → empty list. Present but not an array, or any invalid entry → BadConfig. */
+function parseAddrList(x: unknown, field: string): { ok: true; value: `0x${string}`[] } | { ok: false; detail: string } {
+  if (x === undefined) return { ok: true, value: [] };
+  if (!Array.isArray(x)) return { ok: false, detail: `${field} non è una lista` };
   const out: `0x${string}`[] = [];
   for (const i of x) {
-    if (typeof i !== "string") continue;
+    if (typeof i !== "string") return { ok: false, detail: `${field} contiene voci non valide` };
     const v = i.trim().toLowerCase();
-    if (isAddress(v)) out.push(normalizeAddress(v));
+    if (!isAddress(v)) return { ok: false, detail: `${field} contiene voci non valide` };
+    out.push(normalizeAddress(v));
   }
-  return out;
-};
+  return { ok: true, value: out };
+}
 
 export function isLookalike(a: string, b: string, n = 4): boolean {
   if (!Number.isInteger(n) || n < 2) n = 4;
@@ -109,10 +119,11 @@ function planIdOf(x: unknown): `0x${string}` {
   return ("0x" + "00".repeat(32)) as `0x${string}`;
 }
 
-function amountOf(x: unknown): bigint {
-  if (x === undefined) return 0n;
+function amountOf(x: unknown): { ok: true; value: bigint } | { ok: false } {
+  if (x === undefined) return { ok: true, value: 0n };
   const p = parseCount(x, "amount");
-  return p.ok && p.value >= 0n ? p.value : 0n;
+  if (!p.ok || p.value < 0n) return { ok: false };
+  return { ok: true, value: p.value };
 }
 
 /** Check a payee before sending. Never throws. */
@@ -121,10 +132,11 @@ export async function checkCounterparty(input: CounterpartyInput | null | undefi
   const findings: Finding[] = [];
   const token = typeof input?.token === "string" && input.token.trim() ? normalizeToken(input.token) : undefined;
   const planId = planIdOf(input?.planId);
-  const amount = amountOf(input?.amount);
-  const emit = (reason: Finding["code"] | "SimUnavailable", extra?: Partial<CounterpartyVerdict>): CounterpartyVerdict => {
+  const parsedAmountEarly = amountOf(input?.amount);
+  const amountForEvent = parsedAmountEarly.ok ? parsedAmountEarly.value : 0n;
+  const emit = (reason: Finding["code"], extra?: Partial<CounterpartyVerdict>): CounterpartyVerdict => {
     const verdict = "blocked" as const;
-    const event = blockedEvent({ planId, reason, amount, ts: Number.isFinite(at) ? at : Date.now() });
+    const event = blockedEvent({ planId, reason, amount: amountForEvent, ts: Number.isFinite(at) ? at : Date.now() });
     const v: CounterpartyVerdict = {
       verdict, findings, event, token, checkedAt: Number.isFinite(at) ? at : Date.now(),
       safeHoldInput: toCpSafeHold(verdict, Number.isFinite(at) ? at : Date.now(), input),
@@ -149,10 +161,25 @@ export async function checkCounterparty(input: CounterpartyInput | null | undefi
       return emit("SimUnavailable");
     }
     const address = normalizeAddress(input.address);
-    const allow = asAddrList(input.allowlist);
-    const deny = asAddrList(input.denylist);
-    const paid = asAddrList(input.paidBefore);
-    const known = [...new Set([...allow, ...paid, ...asAddrList(input.known)])];
+    const parsedAmount = amountOf(input.amount);
+    if (!parsedAmount.ok) {
+      findings.push({ code: "BadAmount", severity: "blocked", detail: "amount mancante o non valido" });
+      return emit("BadAmount", { address });
+    }
+    // shadow the outer amount (invalid must not become 0n and proceed)
+    const amount = parsedAmount.value;
+    const allowR = parseAddrList(input.allowlist, "allowlist");
+    const denyR = parseAddrList(input.denylist, "denylist");
+    const paidR = parseAddrList(input.paidBefore, "paidBefore");
+    const knownR = parseAddrList(input.known, "known");
+    if (!allowR.ok) { findings.push({ code: "BadConfig", severity: "blocked", detail: allowR.detail }); return emit("BadConfig", { address }); }
+    if (!denyR.ok) { findings.push({ code: "BadConfig", severity: "blocked", detail: denyR.detail }); return emit("BadConfig", { address }); }
+    if (!paidR.ok) { findings.push({ code: "BadConfig", severity: "blocked", detail: paidR.detail }); return emit("BadConfig", { address }); }
+    if (!knownR.ok) { findings.push({ code: "BadConfig", severity: "blocked", detail: knownR.detail }); return emit("BadConfig", { address }); }
+    const allow = allowR.value;
+    const deny = denyR.value;
+    const paid = paidR.value;
+    const known = [...new Set([...allow, ...paid, ...knownR.value])];
     const offeredChars = input.config?.lookalikeChars ?? input.lookalikeChars;
     const look = tightenNumber(offeredChars, COUNTERPARTY_DEFAULTS.lookalikeChars, true);
     if (!look.ok) {
@@ -192,16 +219,31 @@ export async function checkCounterparty(input: CounterpartyInput | null | undefi
     let kind: CounterpartyVerdict["kind"] = "unknown";
     if (address === ZERO) kind = "zero";
     if (!client || typeof client.getCode !== "function") {
-      findings.push({ code: "SimUnavailable", severity: "blocked", detail: "client RPC assente: eth_getCode non eseguito" });
+      findings.push({ code: "CodeUnavailable", severity: "blocked", detail: "client RPC assente: eth_getCode non eseguito" });
     } else {
       try {
         const code = await client.getCode({ address: address as Address });
-        const hasCode = typeof code === "string" && code !== "" && code !== "0x";
-        if (address !== ZERO) kind = hasCode ? "contract" : "eoa";
-        if (kind === "contract") findings.push({ code: "CounterpartyContract", severity: "warning", detail: `${address} è un contratto (eth_getCode)` });
-        else if (kind === "eoa") findings.push({ code: "CounterpartyEoa", severity: "ok", detail: `${address} è un EOA (eth_getCode vuoto)` });
+        const raw = typeof code === "string" ? code.toLowerCase() : "";
+        const isEoa = raw === "0x";
+        const is7702 = /^0xef0100[0-9a-f]*$/.test(raw) && raw.length >= 14;
+        const isContract = /^0x[0-9a-f]+$/.test(raw) && raw.length > 2 && !is7702;
+        if (address !== ZERO) {
+          if (isEoa) {
+            kind = "eoa";
+            findings.push({ code: "CounterpartyEoa", severity: "ok", detail: `${address} è un EOA (eth_getCode vuoto)` });
+          } else if (is7702) {
+            kind = "delegated";
+            findings.push({ code: "Delegated7702", severity: "warning", detail: `${address} è un EOA delegato EIP-7702 (prefisso 0xef0100), non un contratto semplice` });
+          } else if (isContract) {
+            kind = "contract";
+            findings.push({ code: "CounterpartyContract", severity: "warning", detail: `${address} è un contratto (eth_getCode)` });
+          } else {
+            // undefined, "", or non-hex: fail-closed, never treat as EOA
+            findings.push({ code: "CodeUnavailable", severity: "blocked", detail: "eth_getCode non ha restituito un bytecode valido (serve '0x' esplicito per un EOA)" });
+          }
+        }
       } catch (e) {
-        findings.push({ code: "SimUnavailable", severity: "blocked", detail: `eth_getCode: ${e instanceof Error ? e.message : String(e)}` });
+        findings.push({ code: "CodeUnavailable", severity: "blocked", detail: `eth_getCode: ${e instanceof Error ? e.message : String(e)}` });
       }
     }
 
