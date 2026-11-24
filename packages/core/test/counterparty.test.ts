@@ -169,9 +169,16 @@ describe("lists, amount, getCode and EIP-7702", () => {
 });
 
   it("blocks BadConfig when config is present but not a valid object", async () => {
-    for (const config of [null, "x", 1, []] as const) {
+    for (const config of ["x", 1, []] as const) {
       const r = await checkCounterparty({ address: A, paidBefore: [A], planId: PLAN, amount: 1n, now: 1, config: config as never }, eoa);
       expect(r.verdict, String(config)).toBe("blocked");
       expect(r.event?.reason, String(config)).toBe("BadConfig");
     }
+  });
+
+  it("uses the default lookalike window when config or lookalikeChars is null", async () => {
+    const a = await checkCounterparty({ address: A, paidBefore: [A], planId: PLAN, amount: 1n, now: 1, config: null as never }, eoa);
+    expect(a.verdict).not.toBe("blocked");
+    const b = await checkCounterparty({ address: A, paidBefore: [A], planId: PLAN, amount: 1n, now: 1, lookalikeChars: null as never }, eoa);
+    expect(b.verdict).not.toBe("blocked");
   });

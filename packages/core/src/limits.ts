@@ -32,7 +32,7 @@ export function tightenNumber(
   def: number,
   largerIsLooser = true,
 ): { ok: true; value: number } | { ok: false; reason: "BadConfig"; detail: string } {
-  if (offered === undefined) return { ok: true, value: def };
+  if (offered === undefined || offered === null) return { ok: true, value: def };
   const wantInt = Number.isInteger(def);
   const n = wantInt ? asPositiveInt(offered) : asPositiveNumber(offered);
   if (n === undefined) return { ok: false, reason: "BadConfig", detail: "limite non è un numero finito > 0" };
@@ -47,7 +47,7 @@ export function tightenBigint(
   def: bigint,
   largerIsLooser = true,
 ): { ok: true; value: bigint } | { ok: false; reason: "BadConfig"; detail: string } {
-  if (offered === undefined) return { ok: true, value: def };
+  if (offered === undefined || offered === null) return { ok: true, value: def };
   if (typeof offered !== "bigint" || offered <= 0n) {
     return { ok: false, reason: "BadConfig", detail: "limite non è un bigint > 0" };
   }
@@ -55,4 +55,27 @@ export function tightenBigint(
     return { ok: false, reason: "BadConfig", detail: `limite allargato dalla fonte o dall'input (default ${def}, offerto ${offered})` };
   }
   return { ok: true, value: offered };
+}
+
+/**
+ * Time/size config: omitted or null -> default.
+ * Must be a finite number > 0 and <= max (max is a hard ceiling, distinct from the default).
+ * Values above max are BadConfig: never silently accepted or clamped.
+ */
+export function cappedNumber(
+  offered: unknown,
+  def: number,
+  max: number,
+): { ok: true; value: number } | { ok: false; reason: "BadConfig"; detail: string } {
+  if (offered === undefined || offered === null) return { ok: true, value: def };
+  const wantInt = Number.isInteger(def) && Number.isInteger(max);
+  const n = wantInt ? asPositiveInt(offered) : asPositiveNumber(offered);
+  if (n === undefined) return { ok: false, reason: "BadConfig", detail: "limite non è un numero finito > 0" };
+  if (n > max) return { ok: false, reason: "BadConfig", detail: `limite sopra il massimo (${max}, offerto ${n})` };
+  return { ok: true, value: n };
+}
+
+/** True when `config` is a plain object. `null` is not an object here (use defaults at the call site). */
+export function isConfigObject(config: unknown): config is Record<string, unknown> {
+  return config !== null && typeof config === "object" && !Array.isArray(config);
 }

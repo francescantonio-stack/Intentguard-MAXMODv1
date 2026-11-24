@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { probeNetworks, createProbeRpc, PROBE_DEFAULTS, PROBE_NETWORKS, type JsonRpc, type ProbeNetwork } from "../src/probe";
+import { probeNetworks, createProbeRpc, PROBE_DEFAULTS, PROBE_MAX, PROBE_NETWORKS, type JsonRpc, type ProbeNetwork } from "../src/probe";
 
 const evm: Record<string, unknown> = {
   eth_chainId: "0x279f", // 10143
@@ -64,21 +64,23 @@ describe("config limits", () => {
     throw new Error(method);
   };
 
-  it("blocks a loosened timeout or invalid config (BadConfig) without calling the RPC", async () => {
-    const rows = await probeNetworks({ rpcFor, ids: ["monad-testnet"], config: { timeoutMs: PROBE_DEFAULTS.timeoutMs + 1 } });
+  it("blocks a timeout above the fixed max or an invalid config (BadConfig) without calling the RPC", async () => {
+    const rows = await probeNetworks({ rpcFor, ids: ["monad-testnet"], config: { timeoutMs: PROBE_MAX.timeoutMs + 1 } });
     expect(rows[0]?.ok).toBe(false);
     expect(rows[0]?.event?.reason).toBe("BadConfig");
     expect(rows[0]?.error).toMatch(/BadConfig/);
-    for (const config of [null, { timeoutMs: NaN }, { timeoutMs: 0 }, { timeoutMs: Infinity }, { timeoutMs: "1000" }, { timeoutMs: -0 }] as const) {
+    for (const config of ["x", 1, [], { timeoutMs: NaN }, { timeoutMs: 0 }, { timeoutMs: Infinity }, { timeoutMs: "1000" }, { timeoutMs: -0 }] as const) {
       const r = await probeNetworks({ rpcFor, ids: ["monad-testnet"], config: config as never });
       expect(r[0]?.ok, String(config)).toBe(false);
       expect(r[0]?.event?.reason).toBe("BadConfig");
     }
   });
 
-  it("accepts a tighter timeout and still probes with a mock RPC", async () => {
-    const rows = await probeNetworks({ rpcFor, ids: ["monad-testnet"], config: { timeoutMs: 1_000 } });
-    expect(rows[0]?.ok).toBe(true);
+  it("uses the default timeout when config or timeoutMs is null, and accepts a value between default and max", async () => {
+    for (const config of [null, { timeoutMs: null }, { timeoutMs: PROBE_DEFAULTS.timeoutMs }, { timeoutMs: 20_000 }, { timeoutMs: PROBE_MAX.timeoutMs }, { timeoutMs: 1_000 }] as const) {
+      const rows = await probeNetworks({ rpcFor, ids: ["monad-testnet"], config: config as never });
+      expect(rows[0]?.ok, String(config)).toBe(true);
+    }
   });
 });
 
@@ -110,6 +112,24 @@ describe("nearProbe, clock and fetch", () => {
     expect(rows[0]?.checkedAt).toBe(1_700_000_000_000);
   });
 
+  it("reports ok:false when NEAR chain_id is not testnet", async () => {
+    const main = await probeNetworks({
+      ids: ["near-testnet"],
+      now: 1_700_000_000_000,
+      rpcFor: () => async () => ({ chain_id: "mainnet", sync_info: { latest_block_height: 99, latest_block_time: new Date(1_700_000_000_000).toISOString() } }),
+    });
+    expect(main[0]?.ok).toBe(false);
+    expect(main[0]?.error).toMatch(/chain_id/);
+    expect(main[0]?.event?.reason).toBe("SimUnavailable");
+    const missing = await probeNetworks({
+      ids: ["near-testnet"],
+      now: 1_700_000_000_000,
+      rpcFor: () => async () => ({ sync_info: { latest_block_height: 99, latest_block_time: new Date(1_700_000_000_000).toISOString() } }),
+    });
+    expect(missing[0]?.ok).toBe(false);
+    expect(missing[0]?.error).toMatch(/chain_id/);
+  });
+
   it("createProbeRpc rejects a non-OK HTTP status and honors AbortController timeout", async () => {
     const net = PROBE_NETWORKS[0]!;
     const http = createProbeRpc(net, 5_000, async () => ({ ok: false, status: 503, json: async () => ({}) }));
@@ -119,11 +139,37 @@ describe("nearProbe, clock and fetch", () => {
   });
 });
 
+describe("probeNetworks input", () => {
+  it("treats a missing argument as {} and does not return BAD_TX on every network", async () => {
+    const orig = globalThis.fetch;
+    globalThis.fetch = (async (input: string, init: { body?: string }) => {
+      const method = JSON.parse(String(init.body)).method;
+      const url = String(input);
+      let result: unknown = "0x0";
+      if (method === "eth_chainId") result = url.includes("base") ? "0x14a34" : "0x279f";
+      else if (method === "eth_blockNumber") result = "0x10";
+      else if (method === "eth_gasPrice") result = "0x1";
+      else if (method === "eth_getBlockByNumber") result = { timestamp: "0x1" };
+      else if (method === "status") result = { chain_id: "testnet", sync_info: { latest_block_height: 1, latest_block_time: new Date().toISOString() } };
+      return { ok: true, status: 200, json: async () => ({ result }) };
+    }) as typeof fetch;
+    try {
+      const rows = await probeNetworks();
+      expect(rows).toHaveLength(3);
+      expect(rows.every((r) => (r.error ?? "").startsWith("BAD_TX"))).toBe(false);
+      expect(rows.every((r) => r.ok === true), rows.map((r) => `${r.id}:${r.error}`).join(",")).toBe(true);
+    } finally {
+      globalThis.fetch = orig;
+    }
+  });
+
   it("returns every network blocked, without RPC, when the input is null or not an object", async () => {
-    for (const input of [null, undefined, 0, "x"] as const) {
+    for (const input of [null, 0, "x"] as const) {
       const rows = await probeNetworks(input as never);
       expect(rows.length).toBeGreaterThan(0);
       expect(rows.every((r) => r.ok === false), String(input)).toBe(true);
+      expect(rows[0]?.error, String(input)).toMatch(/BAD_TX/);
       expect(rows[0]?.event?.reason).toBe("SimUnavailable");
     }
   });
+});

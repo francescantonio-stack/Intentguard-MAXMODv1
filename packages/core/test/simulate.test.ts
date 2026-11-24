@@ -15,13 +15,19 @@ const addr = (a: string) => a.toLowerCase();
 
 const tx = (over: Partial<ProposedTx> = {}): ProposedTx => ({ chainId: 10143, from: FROM, to: TO, data: "0x", value: 0n, ...over });
 
-function stub(h: Partial<{ call: unknown; estimateGas: bigint; getBalance: bigint; getGasPrice: bigint; callThrow: unknown; gasThrow: unknown; balanceThrow: unknown }>): SimClient {
-  return {
+function stub(h: Partial<{ call: unknown; estimateGas: bigint; getBalance: bigint; getGasPrice: bigint; callThrow: unknown; gasThrow: unknown; balanceThrow: unknown; gasPriceThrow: unknown; omitGasPrice: boolean }>): SimClient {
+  const client: SimClient = {
     call: async () => { if (h.callThrow) throw h.callThrow; return { data: (h.call as Hex) ?? "0x" }; },
     estimateGas: async () => { if (h.gasThrow) throw h.gasThrow; return h.estimateGas ?? 21_000n; },
     getBalance: async () => { if (h.balanceThrow) throw h.balanceThrow; return h.getBalance ?? 10n ** 18n; },
-    getGasPrice: h.getGasPrice !== undefined || true ? async () => h.getGasPrice ?? 1_000_000_000n : undefined,
   };
+  if (!h.omitGasPrice) {
+    client.getGasPrice = async () => {
+      if (h.gasPriceThrow) throw h.gasPriceThrow;
+      return h.getGasPrice ?? 1_000_000_000n;
+    };
+  }
+  return client;
 }
 
 const transferData = (to: Address, amount: bigint) => encodeFunctionData({ abi: erc20Abi, functionName: "transfer", args: [to, amount] });
@@ -225,6 +231,19 @@ describe("fail-closed", () => {
   });
 });
 
+describe("getGasPrice required", () => {
+  it("blocks SimUnavailable when getGasPrice is missing or fails (fee not skipped)", async () => {
+    const missing = await simulateTx(tx(), stub({ omitGasPrice: true }));
+    expect(missing.ok).toBe(false);
+    expect(missing.blockReason).toBe("SimUnavailable");
+    expect(missing.revert?.reason).toMatch(/getGasPrice/);
+    const boom = await simulateTx(tx(), stub({ gasPriceThrow: new Error("gas rpc down") }));
+    expect(boom.ok).toBe(false);
+    expect(boom.blockReason).toBe("SimUnavailable");
+    expect(boom.revert?.reason).toMatch(/eth_gasPrice|gas rpc down/);
+  });
+});
+
 describe("config limits", () => {
   it("rejects a chainId that does not fit in a safe integer", async () => {
     const r = await simulateTx({ chainId: 2n ** 256n, from: FROM, to: TO, data: "0x", value: 0n }, stub({}));
@@ -238,11 +257,18 @@ describe("config limits", () => {
     expect(wide.ok).toBe(false);
     expect(wide.revert?.reason).toMatch(/BadConfig/);
     expect(toActionBlocked(wide, PLAN)?.reason).toBe("BadConfig");
-    for (const config of [null, "x", { unlimitedApproveMin: 0n }, { unlimitedApproveMin: -1n }, { unlimitedApproveMin: 100 }, { unlimitedApproveMin: "1" }, { unlimitedApproveMin: NaN }] as const) {
+    for (const config of ["x", 1, [], { unlimitedApproveMin: 0n }, { unlimitedApproveMin: -1n }, { unlimitedApproveMin: 100 }, { unlimitedApproveMin: "1" }, { unlimitedApproveMin: NaN }] as const) {
       const r = await simulateTx(tx(), stub({}), { config: config as never });
       expect(r.ok, String(config)).toBe(false);
       expect(r.revert?.reason).toMatch(/BadConfig/);
     }
+  });
+
+  it("uses the default unlimited-approve threshold when config or the field is null", async () => {
+    const a = await simulateTx(tx(), stub({}), { config: null as never });
+    expect(a.ok).toBe(true);
+    const b = await simulateTx(tx(), stub({}), { config: { unlimitedApproveMin: null } as never });
+    expect(b.ok).toBe(true);
   });
 
   it("accepts a tighter threshold and flags a smaller approve", async () => {
