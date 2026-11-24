@@ -221,4 +221,25 @@ describe("BudgetTree", () => {
     expect(reasonOf(() => b.spentInWindow("ghost"))).toBe("UnknownBudget");
     expect(events.map((e) => [e.kind, e.reason, e.id])).toEqual([["blocked", "UnknownBudget", "ghost"], ["blocked", "UnknownBudget", "ghost"]]);
   });
+
+  it("bad constructor input -> blocked event first, then throw (QC fail-closed suite)", () => {
+    const cases: Array<[() => unknown[], string]> = [
+      [() => ["root", null, 10n], "BadToken"], [() => ["root", " ", 10n], "BadToken"],
+      [() => ["root", "USDC", -1n], "BadCap"], [() => ["root", "USDC", 10], "BadCap"],
+      [() => ["", "USDC", 10n], "UnknownBudget"],
+    ];
+    for (const [args, reason] of cases) {
+      const ev: QueueEvent[] = [];
+      const [r, tk, cap] = args();
+      expect(() => new BudgetTree(r as never, tk as never, cap as never, { onEvent: (e) => ev.push(e) })).toThrow(reason);
+      expect(ev).toHaveLength(1);
+      expect(ev[0]).toMatchObject({ kind: "blocked", reason });
+    }
+    for (const bad of [{ windowMs: null }, { windowMs: 0 }, { now: 5 }]) {
+      const ev: QueueEvent[] = [];
+      expect(() => new BudgetTree("root", "USDC", 10n, { ...(bad as object), onEvent: (e: QueueEvent) => ev.push(e) })).toThrow("BadConfig");
+      expect(ev[0]).toMatchObject({ kind: "blocked", reason: "BadConfig" });
+    }
+    expect(() => new BudgetTree("root", "USDC", 10n, null as never)).toThrow("BadConfig");
+  });
 });

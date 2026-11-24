@@ -13,7 +13,8 @@ import type { QueueEvent } from "./events";
 
 export type BudgetBlockReason =
   | "BadNow" | "BadAmount" | "BadPlanId" | "UnknownBudget" | "WrongToken" | "OverBudget"
-  | "BadCap" | "OverParentCap" | "BelowChildrenReserve" | "DuplicateId" | "IdReusedElsewhere" | "CannotRemove";
+  | "BadCap" | "OverParentCap" | "BelowChildrenReserve" | "DuplicateId" | "IdReusedElsewhere" | "CannotRemove"
+  | "BadConfig" | "BadToken";
 
 export interface BudgetConfigEvent {
   kind: "allocated" | "resized" | "removed";
@@ -58,15 +59,20 @@ export class BudgetTree {
   private lastNow = -Infinity;
 
   constructor(rootId: string, token: string, cap: bigint, cfg: BudgetTreeConfig = {}) {
-    if (typeof rootId !== "string" || !rootId) throw new Error("root id required");
-    if (typeof token !== "string" || !token) throw new Error("token required");
-    if (!isNonNeg(cap)) throw new Error("cap must be a non-negative bigint");
-    this.windowMs = cfg.windowMs ?? 86_400_000;
-    if (!(Number.isFinite(this.windowMs) && this.windowMs > 0)) throw new Error("windowMs must be finite and > 0");
-    if (cfg.now !== undefined && typeof cfg.now !== "function") throw new Error("now must be a function");
-    this.nowFn = cfg.now ?? (() => Date.now());
-    this.onEvent = cfg.onEvent;
-    this.onConfig = cfg.onConfig;
+    // sinks first, so a bad constructor input still leaves a `blocked` event in the log before the throw
+    const c = (typeof cfg === "object" && cfg !== null ? cfg : {}) as BudgetTreeConfig;
+    this.onEvent = typeof c.onEvent === "function" ? c.onEvent : undefined;
+    this.onConfig = typeof c.onConfig === "function" ? c.onConfig : undefined;
+    this.windowMs = c.windowMs === undefined ? 86_400_000 : (c.windowMs as number); // null/junk is not "missing"
+    this.nowFn = typeof c.now === "function" ? c.now : () => Date.now();
+    if (cfg !== c) this.block("BadConfig", "config must be an object", null, cap);
+    if (c.onEvent !== undefined && typeof c.onEvent !== "function") this.block("BadConfig", "onEvent must be a function", null, cap);
+    if (c.onConfig !== undefined && typeof c.onConfig !== "function") this.block("BadConfig", "onConfig must be a function", null, cap);
+    if (!(typeof this.windowMs === "number" && Number.isFinite(this.windowMs) && this.windowMs > 0)) this.block("BadConfig", "windowMs must be finite and > 0", null, cap);
+    if (c.now !== undefined && typeof c.now !== "function") this.block("BadConfig", "now must be a function", null, cap);
+    if (typeof rootId !== "string" || !rootId) this.block("UnknownBudget", "root id required", null, cap);
+    if (typeof token !== "string" || !token.trim()) this.block("BadToken", "token required", rootId, cap);
+    if (!isNonNeg(cap)) this.block("BadCap", "cap must be a non-negative bigint", rootId, cap);
     this.nodes.set(rootId, { id: rootId, parent: null, cap, token: token.toUpperCase(), spends: [], orphans: [], children: new Set() });
   }
 
