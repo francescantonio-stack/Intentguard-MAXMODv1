@@ -73,6 +73,20 @@ describe("decodeApproval (shared, Moon-compatible selectors)", () => {
     expect(decodeApproval("0x")).toEqual({ unlimited: false, malformed: false });
   });
 
+  it("marks odd-length hex after an approval selector as MalformedApproval", () => {
+    for (const [sel, method] of Object.entries(SENSITIVE_SELECTORS)) {
+      const odd = sel + "a";
+      const d = decodeApproval(odd);
+      expect(d.malformed, sel).toBe(true);
+      expect(d.kind, sel).toBe(method);
+      expect(d.reason, sel).toBe("MalformedApproval");
+      expect(isTruncatedSensitive(odd)).toEqual({ method });
+    }
+    // unknown selector, odd length: not treated as an approval
+    expect(decodeApproval("0xdeadbeefa")).toEqual({ unlimited: false, malformed: false });
+    expect(isTruncatedSensitive("0xdeadbeefa")).toBeUndefined();
+  });
+
   it("accepts a tighter unlimitedMin from the caller (simulate) without changing the default", () => {
     const data = encodeFunctionData({ abi: erc20Abi, functionName: "approve", args: [TO, 100n] });
     expect(decodeApproval(data).unlimited).toBe(false);
