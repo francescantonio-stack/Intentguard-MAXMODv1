@@ -1,11 +1,12 @@
 import {
-  decodeErrorResult, decodeFunctionData, getAddress, isAddress, maxUint256, stringToHex, toFunctionSelector,
+  decodeErrorResult, decodeFunctionData, getAddress, isAddress, maxUint256, stringToHex,
   type Abi, type Address, type Hex,
 } from "viem";
 import { erc20Abi, planExecutorAbi } from "./abi";
 import { redactSecrets } from "./redact";
 import { blockedEvent, normalizeAddress, normalizePlanId, type QueueEvent } from "./events";
 import { tightenBigint } from "./limits";
+import { decodeApproval } from "./approvals";
 
 /**
  * Pre-sign simulation (idea: MonadLens). READ-ONLY: eth_call + eth_estimateGas + eth_getBalance.
@@ -151,56 +152,14 @@ export function revertReason(e: unknown): { reason: string; raw?: Hex } {
   return { reason: msg ?? "execution reverted (no reason)", raw };
 }
 
-const approvalFns = [
-  { type: "function", name: "approve", stateMutability: "nonpayable",
-    inputs: [{ name: "spender", type: "address" }, { name: "amount", type: "uint256" }], outputs: [{ type: "bool" }] },
-  { type: "function", name: "increaseAllowance", stateMutability: "nonpayable",
-    inputs: [{ name: "spender", type: "address" }, { name: "addedValue", type: "uint256" }], outputs: [{ type: "bool" }] },
-  { type: "function", name: "permit", stateMutability: "nonpayable",
-    inputs: [
-      { name: "owner", type: "address" }, { name: "spender", type: "address" }, { name: "value", type: "uint256" },
-      { name: "deadline", type: "uint256" }, { name: "v", type: "uint8" }, { name: "r", type: "bytes32" }, { name: "s", type: "bytes32" },
-    ], outputs: [] },
-  { type: "function", name: "permit", stateMutability: "nonpayable",
-    inputs: [
-      { name: "holder", type: "address" }, { name: "spender", type: "address" }, { name: "nonce", type: "uint256" },
-      { name: "expiry", type: "uint256" }, { name: "allowed", type: "bool" }, { name: "v", type: "uint8" }, { name: "r", type: "bytes32" }, { name: "s", type: "bytes32" },
-    ], outputs: [] },
-  { type: "function", name: "setApprovalForAll", stateMutability: "nonpayable",
-    inputs: [{ name: "operator", type: "address" }, { name: "approved", type: "bool" }], outputs: [] },
-] as const;
-
-/** Selectors that, if truncated or malformed, must block (fail-closed). */
-export const APPROVAL_SELECTORS: ReadonlySet<string> = new Set(approvalFns.map((f) => toFunctionSelector(f).toLowerCase()));
-
-const tokenAbi = [
+const transferAbi = [
   ...erc20Abi,
   { type: "function", name: "transferFrom", stateMutability: "nonpayable",
     inputs: [{ name: "from", type: "address" }, { name: "to", type: "address" }, { name: "amount", type: "uint256" }],
     outputs: [{ type: "bool" }] },
-  ...approvalFns,
 ] as const;
 
-const isApprovalSelector = (data: string): boolean =>
-  data.length >= 10 && APPROVAL_SELECTORS.has(data.slice(0, 10).toLowerCase());
-
-const pushApprove = (
-  effects: TokenEffect[],
-  warnings: Warning[],
-  token: Address,
-  owner: Address,
-  spender: Address,
-  amount: bigint,
-  unlimited: boolean,
-  label: string,
-  unlimitedMin: bigint,
-) => {
-  const unl = unlimited || amount >= unlimitedMin;
-  effects.push({ kind: "approve", token, owner, spender: normalizeAddress(spender) as Address, amount: { value: amount, source: "calldata (decoded)" }, unlimited: unl });
-  if (unl) warnings.push({ code: "UNLIMITED_APPROVE", detail: `${label} illimitato a ${normalizeAddress(spender)} sul token ${token}` });
-};
-
-/** Decode the top-level call: transfers and approvals (approve, increaseAllowance, permit, setApprovalForAll). Never throws. */
+/** Decode the top-level call: transfers here, approvals via `decodeApproval` (shared with Moon). Never throws. */
 export function decodeTokenEffects(tx: { from?: Address; to?: Address; data?: Hex } | null | undefined, unlimitedMin: bigint = SIM_DEFAULTS.unlimitedApproveMin): { effects: TokenEffect[]; warnings: Warning[] } {
   const effects: TokenEffect[] = [];
   const warnings: Warning[] = [];
@@ -210,44 +169,33 @@ export function decodeTokenEffects(tx: { from?: Address; to?: Address; data?: He
   const token = tx.to && isAddress(tx.to) ? normalizeAddress(tx.to) : undefined;
   const sender = tx.from && isAddress(tx.from) ? normalizeAddress(tx.from) : undefined;
   if (!token || !sender) return { effects, warnings };
+  const src = "calldata (decoded)";
+
+  const approval = decodeApproval(data, unlimitedMin);
+  if (approval.malformed) {
+    warnings.push({ code: "MALFORMED_APPROVAL", detail: `calldata di approvazione malformata o troncata (selettore ${data.slice(0, 10)})` });
+    return { effects, warnings };
+  }
+  if (approval.kind) {
+    const spender = (approval.spender ?? approval.operator ?? token) as Address;
+    const amount = approval.amount ?? 0n;
+    const label = approval.style === "dai-permit" ? "permit DAI" : (approval.kind ?? "approve");
+    effects.push({ kind: "approve", token, owner: sender, spender, amount: { value: amount, source: src }, unlimited: approval.unlimited });
+    if (approval.unlimited) warnings.push({ code: "UNLIMITED_APPROVE", detail: `${label} illimitato a ${spender} sul token ${token}` });
+    return { effects, warnings };
+  }
+
   try {
-    const d = decodeFunctionData({ abi: tokenAbi as Abi, data: data as Hex });
-    const src = "calldata (decoded)";
+    const d = decodeFunctionData({ abi: transferAbi as Abi, data: data as Hex });
     if (d.functionName === "transfer") {
       const [to, amount] = d.args as [Address, bigint];
       effects.push({ kind: "transfer", token, from: sender, to: normalizeAddress(to) as Address, amount: { value: amount, source: src } });
     } else if (d.functionName === "transferFrom") {
       const [from, to, amount] = d.args as [Address, Address, bigint];
       effects.push({ kind: "transfer", token, from: normalizeAddress(from) as Address, to: normalizeAddress(to) as Address, amount: { value: amount, source: src } });
-    } else if (d.functionName === "approve") {
-      const [spender, amount] = d.args as [Address, bigint];
-      pushApprove(effects, warnings, token, sender, spender, amount, false, "approve", unlimitedMin);
-    } else if (d.functionName === "increaseAllowance") {
-      const [spender, added] = d.args as [Address, bigint];
-      pushApprove(effects, warnings, token, sender, spender, added, false, "increaseAllowance", unlimitedMin);
-    } else if (d.functionName === "permit") {
-      const args = d.args as unknown[];
-      // EIP-2612: (owner, spender, value, deadline, v, r, s) — 7 args, value is bigint
-      // DAI: (holder, spender, nonce, expiry, allowed, v, r, s) — 8 args, allowed is bool
-      if (args.length === 8 && typeof args[4] === "boolean") {
-        const spender = args[1] as Address;
-        const allowed = args[4];
-        pushApprove(effects, warnings, token, sender, spender, allowed ? maxUint256 : 0n, allowed, "permit DAI", unlimitedMin);
-      } else {
-        const spender = args[1] as Address;
-        const value = args[2] as bigint;
-        pushApprove(effects, warnings, token, sender, spender, value, false, "permit", unlimitedMin);
-      }
-    } else if (d.functionName === "setApprovalForAll") {
-      const [operator, approved] = d.args as [Address, boolean];
-      pushApprove(effects, warnings, token, sender, operator, approved ? maxUint256 : 0n, approved, "setApprovalForAll", unlimitedMin);
     }
   } catch {
-    if (isApprovalSelector(data)) {
-      warnings.push({ code: "MALFORMED_APPROVAL", detail: `calldata di approvazione malformata o troncata (selettore ${data.slice(0, 10)})` });
-    } else {
-      warnings.push({ code: "UNKNOWN_CALLDATA", detail: `calldata non decodificata (selettore ${String(data).slice(0, 10)})` });
-    }
+    warnings.push({ code: "UNKNOWN_CALLDATA", detail: `calldata non decodificata (selettore ${String(data).slice(0, 10)})` });
   }
   return { effects, warnings };
 }

@@ -2,9 +2,10 @@ import { describe, expect, it } from "vitest";
 import { maxUint256, encodeFunctionData, encodeErrorResult, type Address, type Hex } from "viem";
 import { erc20Abi, planExecutorAbi } from "../src/abi";
 import {
-  decodeTokenEffects, parseCount, revertReason, simSucceeded, simulateTx, toActionBlocked, toSafeHoldInput, toSuccessOddsInput, checkSimulateApiInput, SIM_DEFAULTS, APPROVAL_SELECTORS,
+  decodeTokenEffects, parseCount, revertReason, simSucceeded, simulateTx, toActionBlocked, toSafeHoldInput, toSuccessOddsInput, checkSimulateApiInput, SIM_DEFAULTS,
   type ProposedTx, type SimClient,
 } from "../src/simulate";
+import { APPROVAL_SELECTORS } from "../src/approvals";
 
 const FROM = "0xd2FE6a3Ae252D6fb2f604805898177c8FdaAa24B" as Address;
 const TO = "0x1111111111111111111111111111111111111111" as Address;
