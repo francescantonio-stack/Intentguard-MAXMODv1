@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { evaluateSafeHold, guardWithSafeHold, type Observation } from "../src/safeHold";
-import type { QueueEvent } from "../src/approvalQueue";
+import type { QueueEvent } from "../src/events";
 
 const NOW = 1_800_000_000_000;
 const PLAN = `0x${"ab".repeat(32)}` as `0x${string}`;

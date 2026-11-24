@@ -4,7 +4,7 @@
  * Result is "PROCEED" only if EVERY check passes, otherwise "HOLD" with the reasons (fail-closed).
  * Blocks are reported with the shared QueueEvent shape (ActionBlocked(planId, reason, amount)).
  */
-import type { QueueEvent } from "./approvalQueue";
+import type { QueueEvent } from "./events";
 
 export type SafeHoldCode =
   | "BAD_NOW" | "BAD_INPUT" | "NO_REQUIRED" | "BAD_CONFIG" | "MALFORMED" | "BAD_VALUE" | "NO_TIMESTAMP"
