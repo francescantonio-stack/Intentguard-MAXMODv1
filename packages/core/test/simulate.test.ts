@@ -15,13 +15,19 @@ const addr = (a: string) => a.toLowerCase();
 
 const tx = (over: Partial<ProposedTx> = {}): ProposedTx => ({ chainId: 10143, from: FROM, to: TO, data: "0x", value: 0n, ...over });
 
-function stub(h: Partial<{ call: unknown; estimateGas: bigint; getBalance: bigint; getGasPrice: bigint; callThrow: unknown; gasThrow: unknown; balanceThrow: unknown }>): SimClient {
-  return {
+function stub(h: Partial<{ call: unknown; estimateGas: bigint; getBalance: bigint; getGasPrice: bigint; callThrow: unknown; gasThrow: unknown; balanceThrow: unknown; gasPriceThrow: unknown; omitGasPrice: boolean }>): SimClient {
+  const client: SimClient = {
     call: async () => { if (h.callThrow) throw h.callThrow; return { data: (h.call as Hex) ?? "0x" }; },
     estimateGas: async () => { if (h.gasThrow) throw h.gasThrow; return h.estimateGas ?? 21_000n; },
     getBalance: async () => { if (h.balanceThrow) throw h.balanceThrow; return h.getBalance ?? 10n ** 18n; },
-    getGasPrice: h.getGasPrice !== undefined || true ? async () => h.getGasPrice ?? 1_000_000_000n : undefined,
   };
+  if (!h.omitGasPrice) {
+    client.getGasPrice = async () => {
+      if (h.gasPriceThrow) throw h.gasPriceThrow;
+      return h.getGasPrice ?? 1_000_000_000n;
+    };
+  }
+  return client;
 }
 
 const transferData = (to: Address, amount: bigint) => encodeFunctionData({ abi: erc20Abi, functionName: "transfer", args: [to, amount] });
@@ -222,6 +228,19 @@ describe("fail-closed", () => {
     const pk = "0x" + "cd".repeat(32);
     const out = toSafeHoldInput({ ok: false, chainId: 1, simulatedAt: 1 }, { tokenIn: "USDC", sk: pk, memo: pk });
     expect(out.intent).toEqual({ tokenIn: "USDC", sk: "[redacted]", memo: "[redacted]" });
+  });
+});
+
+describe("getGasPrice required", () => {
+  it("blocks SimUnavailable when getGasPrice is missing or fails (fee not skipped)", async () => {
+    const missing = await simulateTx(tx(), stub({ omitGasPrice: true }));
+    expect(missing.ok).toBe(false);
+    expect(missing.blockReason).toBe("SimUnavailable");
+    expect(missing.revert?.reason).toMatch(/getGasPrice/);
+    const boom = await simulateTx(tx(), stub({ gasPriceThrow: new Error("gas rpc down") }));
+    expect(boom.ok).toBe(false);
+    expect(boom.blockReason).toBe("SimUnavailable");
+    expect(boom.revert?.reason).toMatch(/eth_gasPrice|gas rpc down/);
   });
 });
 

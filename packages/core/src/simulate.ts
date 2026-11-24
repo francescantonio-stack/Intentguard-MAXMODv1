@@ -319,15 +319,18 @@ export async function simulateTx(tx: unknown, client: unknown, o: SimOptions = {
         lines: [`❌ Stima gas fallita: ${revert.reason}`],
       };
     }
-    let gasPrice: Sourced<bigint> | undefined;
-    if (c.getGasPrice) {
-      try {
-        const gp = await c.getGasPrice();
-        if (typeof gp !== "bigint" || gp < 0n) return blocked("BAD_VALUE: eth_gasPrice ha restituito un valore non valido", { ...base, nativeBalanceBefore: balance, gas });
-        gasPrice = { value: gp, source: `eth_gasPrice @ ${rpc}` };
-      } catch { /* optional */ }
+    if (!c.getGasPrice) {
+      return blocked("SimUnavailable: getGasPrice non disponibile", { ...base, nativeBalanceBefore: balance, gas, blockReason: "SimUnavailable" });
     }
-    if (!gasPrice) warnings.push({ code: "GAS_PRICE_UNKNOWN", detail: "prezzo del gas non disponibile: costo gas escluso" });
+    let gasPrice: Sourced<bigint>;
+    try {
+      const gp = await c.getGasPrice();
+      if (typeof gp !== "bigint" || gp < 0n) return blocked("BAD_VALUE: eth_gasPrice ha restituito un valore non valido", { ...base, nativeBalanceBefore: balance, gas, blockReason: "SimUnavailable" });
+      gasPrice = { value: gp, source: `eth_gasPrice @ ${rpc}` };
+    } catch (e) {
+      const msg = e instanceof Error ? e.message : String(e);
+      return blocked(`SimUnavailable: eth_gasPrice fallito (${msg})`, { ...base, nativeBalanceBefore: balance, gas, blockReason: "SimUnavailable" });
+    }
 
     const fee = gasPrice ? gas.value * gasPrice.value : 0n;
     const needed = value + fee;

@@ -100,9 +100,14 @@ function isUnlimited(kind: ApprovalKind, style: DecodedApproval["style"], args: 
  */
 export function decodeApproval(data: unknown, unlimitedMin: bigint = maxUint256): DecodedApproval {
   if (data === undefined || data === null || data === "" || data === "0x") return empty();
-  if (!isValidHexData(data)) return empty();
+  if (typeof data !== "string") return empty();
   const sel = evmSelector(data);
   const hinted = sel ? SENSITIVE_SELECTORS[sel] : undefined;
+  // Odd-length (or non-hex) payload after a known approval selector is malformed, not ignored.
+  if (hinted && !/^(?:[0-9a-fA-F]{2})*$/.test(data.slice(10))) {
+    return { kind: hinted, method: hinted, unlimited: false, malformed: true, reason: "MalformedApproval" };
+  }
+  if (!isValidHexData(data)) return empty();
 
   for (const { abi, style } of APPROVAL_ABIS) {
     try {
@@ -142,11 +147,8 @@ export function decodeApproval(data: unknown, unlimitedMin: bigint = maxUint256)
 
 /** Calldata looks like approve/permit/setApprovalForAll but cannot be fully decoded (truncated or malformed). Same contract as Moon. */
 export function isTruncatedSensitive(data: unknown): { method: string } | undefined {
-  if (typeof data !== "string" || !isValidHexData(data) || data === "0x") return undefined;
-  const sel = evmSelector(data);
-  const method = sel ? SENSITIVE_SELECTORS[sel] : undefined;
-  if (!method) return undefined;
+  if (typeof data !== "string" || data === "0x") return undefined;
   const d = decodeApproval(data);
-  if (d.malformed) return { method };
+  if (d.malformed && d.kind) return { method: d.kind };
   return undefined;
 }

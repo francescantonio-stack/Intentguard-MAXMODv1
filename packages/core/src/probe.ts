@@ -91,9 +91,17 @@ async function nearProbe(net: ProbeNetwork, rpc: JsonRpc, now: number, clock: ()
     return { ...failed(net, "status incompleto: manca latest_block_height", now), latencyMs };
   }
   const t = typeof info?.latest_block_time === "string" ? Date.parse(info.latest_block_time) : undefined;
+  const chainSrc = typeof chainIdRaw === "string" ? { value: 0, source: `status.chain_id=${chainIdRaw} @ ${net.rpc}` } : undefined;
+  if (chainIdRaw !== "testnet") {
+    return {
+      ...failed(net, `chain_id ${String(chainIdRaw)} ≠ atteso testnet`, now),
+      latencyMs,
+      chainId: chainSrc,
+    };
+  }
   return {
     id: net.id, ok: true,
-    chainId: typeof chainIdRaw === "string" ? { value: 0, source: `status.chain_id=${chainIdRaw} @ ${net.rpc}` } : undefined,
+    chainId: chainSrc,
     blockNumber: { value: BigInt(height), source: `status.sync_info.latest_block_height @ ${net.rpc}` },
     blockAgeSec: t && Number.isFinite(t) ? { value: Math.max(0, Math.round((now - t) / 1000)), source: `status.sync_info.latest_block_time @ ${net.rpc}` } : undefined,
     latencyMs, native: net.native, rpc: net.rpc, explorer: net.explorer, checkedAt: now,
@@ -136,6 +144,7 @@ export async function probeNetworks(o?: {
   config?: { timeoutMs?: unknown };
   fetchImpl?: ProbeFetch;
 }): Promise<NetworkProbe[]> {
+  if (o === undefined) o = {};
   if (o == null || typeof o !== "object") {
     return PROBE_NETWORKS.map((net) => failed(net, "BAD_TX: input non valido", Date.now()));
   }
