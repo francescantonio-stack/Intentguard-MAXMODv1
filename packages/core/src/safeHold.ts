@@ -7,7 +7,7 @@
 import type { QueueEvent } from "./approvalQueue";
 
 export type SafeHoldCode =
-  | "BAD_NOW" | "BAD_INPUT" | "BAD_CONFIG" | "MALFORMED" | "BAD_VALUE" | "NO_TIMESTAMP"
+  | "BAD_NOW" | "BAD_INPUT" | "NO_REQUIRED" | "BAD_CONFIG" | "MALFORMED" | "BAD_VALUE" | "NO_TIMESTAMP"
   | "FUTURE_TIMESTAMP" | "STALE" | "LOW_CONFIDENCE" | "MISSING" | "TOO_FEW_SOURCES" | "SOURCES_DISAGREE" | "CHECK_ERROR";
 
 export interface Observation {
@@ -50,11 +50,18 @@ export function evaluateSafeHold(input: SafeHoldInput = {}): SafeHoldResult {
   if (!num(now)) return hold("BAD_NOW", "current time is not valid");
   const observations = input.observations === undefined ? [] : input.observations;
   const required = input.required === undefined ? [] : input.required;
-  if (!Array.isArray(observations) || !Array.isArray(required) || !required.every((k) => typeof k === "string"))
-    return hold("BAD_INPUT", "observations and required must be arrays (required of strings)");
-  const cfg: SafeHoldConfig = { ...SAFE_HOLD_DEFAULTS, ...(input.config ?? {}) };
-  for (const [k, v] of Object.entries(cfg)) if (!num(v) || v < 0) return hold("BAD_CONFIG", `config.${k} not valid`);
+  if (!Array.isArray(observations)) return hold("MALFORMED", "observations is not a list");
+  if (!Array.isArray(required) || !required.every((k) => typeof k === "string"))
+    return hold("NO_REQUIRED", "required must be a list of strings");
+  const cfg: SafeHoldConfig = { ...SAFE_HOLD_DEFAULTS, ...(input.config && typeof input.config === "object" ? input.config : {}) };
+  for (const k of Object.keys(SAFE_HOLD_DEFAULTS) as Array<keyof SafeHoldConfig>) {
+    const v = cfg[k];
+    if (!num(v) || v <= 0) return hold("BAD_CONFIG", `config.${k} must be finite and > 0`);
+  }
+  if (!Number.isInteger(cfg.minSources) || cfg.minSources < 1) return hold("BAD_CONFIG", "config.minSources must be an integer >= 1");
   if (cfg.minConfidence > 1) return hold("BAD_CONFIG", "config.minConfidence above 1");
+  // Nothing required = nothing verified: never PROCEED on empty.
+  if (required.length === 0 || !required.every((k) => k.length > 0)) return hold("NO_REQUIRED", "list of required data is empty");
 
   const reasons: SafeHoldReason[] = [];
   const byKey = new Map<string, Observation[]>();
@@ -65,7 +72,8 @@ export function evaluateSafeHold(input: SafeHoldInput = {}): SafeHoldResult {
     if (!num(ob.value)) { reasons.push({ code: "BAD_VALUE", key: ob.key, detail: `${tag}: value not numeric` }); continue; }
     if (!num(ob.observedAt)) { reasons.push({ code: "NO_TIMESTAMP", key: ob.key, detail: `${tag}: missing time` }); continue; }
     const ageSec = (now - ob.observedAt) / 1000;
-    const maxAge = num(ob.maxAgeSec) ? ob.maxAgeSec : cfg.maxAgeSec;
+    // the source can only TIGHTEN the limit, never widen it
+    const maxAge = num(ob.maxAgeSec) && ob.maxAgeSec >= 0 ? Math.min(ob.maxAgeSec, cfg.maxAgeSec) : cfg.maxAgeSec;
     if (ageSec < -cfg.maxFutureSkewSec) { reasons.push({ code: "FUTURE_TIMESTAMP", key: ob.key, detail: `${tag}: ${(-ageSec).toFixed(1)} s in the future` }); continue; }
     if (ageSec > maxAge) { reasons.push({ code: "STALE", key: ob.key, detail: `${tag}: ${ageSec.toFixed(1)} s old (max ${maxAge})` }); continue; }
     if (ob.confidence !== undefined && ob.confidence !== null && !(num(ob.confidence) && ob.confidence >= 0 && ob.confidence <= 1)) {
