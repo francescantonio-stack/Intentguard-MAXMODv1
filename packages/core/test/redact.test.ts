@@ -81,3 +81,7 @@ describe("hex keep-list is exact and cannot be widened", () => {
     expect(ok.value).toEqual({ planHash: PK, txHash: "[redacted]" });
   });
 });
+
+  it("redacts salt even when the value is not hex", () => {
+    expect(redactSecrets({ salt: "pepper", userSalt: "x", planHash: PK })).toEqual({ salt: "[redacted]", userSalt: "[redacted]", planHash: PK });
+  });

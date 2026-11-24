@@ -1,5 +1,6 @@
-import { createPublicClient, http, isAddress, type Address, type Hex } from "viem";
-import { BASE_SEPOLIA, MONAD_TESTNET, simulateTx, toActionBlocked, toJson, toSafeHoldInput, toSuccessOddsInput } from "@intentguard/core";
+import { createPublicClient, http, type Hex } from "viem";
+import { BASE_SEPOLIA, MONAD_TESTNET, checkSimulateApiInput, simulateTx, toActionBlocked, toJson, toSafeHoldInput, toSuccessOddsInput } from "@intentguard/core";
+import { readJsonBody } from "../../../lib/limitBody";
 
 export const dynamic = "force-dynamic";
 export const maxDuration = 30;
@@ -13,34 +14,30 @@ const RPC: Record<number, { url: string; label: string }> = {
 /**
  * POST a proposed tx; returns the simulated effect (no signing, no broadcast).
  * Body: { chainId, from, to, data?, value?, planId? }
+ * Invalid data/value → 400; body over 16KB → 413; missing planId on a failed sim → 400 MissingPlanId.
  */
 export async function POST(req: Request) {
-  let body: Record<string, unknown>;
-  try { body = await req.json(); }
-  catch { return Response.json({ error: "invalid JSON" }, { status: 400 }); }
+  const limited = await readJsonBody(req);
+  if (!limited.ok) return limited.response;
 
-  const chainId = Number(body.chainId);
-  const rpc = RPC[chainId];
+  const parsed = checkSimulateApiInput(limited.body);
+  if (!parsed.ok) return Response.json({ error: parsed.error }, { status: parsed.status });
+
+  const rpc = RPC[parsed.tx.chainId];
   if (!rpc) return Response.json({ error: "unsupported chainId (monad-testnet=10143, base-sepolia=84532)" }, { status: 400 });
-  if (typeof body.from !== "string" || !isAddress(body.from) || typeof body.to !== "string" || !isAddress(body.to)) {
-    return Response.json({ error: "from and to must be 0x addresses" }, { status: 400 });
-  }
-  const value = body.value === undefined || body.value === "" ? 0n : BigInt(String(body.value));
-  const data = (typeof body.data === "string" && body.data.startsWith("0x") ? body.data : "0x") as Hex;
+
   const client = createPublicClient({ transport: http(rpc.url) });
   try {
-    const sim = await simulateTx(
-      { chainId, from: body.from as Address, to: body.to as Address, data, value },
-      client,
-      { rpcLabel: rpc.label },
-    );
-    const planId = typeof body.planId === "string" && /^0x[0-9a-fA-F]{64}$/.test(body.planId) ? (body.planId as Hex) : undefined;
-    const blocked = planId ? toActionBlocked(sim, planId) : null;
+    const sim = await simulateTx(parsed.tx, client, { rpcLabel: rpc.label });
+    const blocked = toActionBlocked(sim, parsed.planId);
+    if (parsed.planIdMissing && blocked) {
+      return Response.json({ error: "MissingPlanId", sim, actionBlocked: blocked }, { status: 400 });
+    }
     return new Response(toJson({
       sim,
       actionBlocked: blocked,
       successOddsInput: toSuccessOddsInput(sim),
-      safeHoldInput: toSafeHoldInput(sim, typeof body.intent === "string" ? body.intent : undefined),
+      safeHoldInput: toSafeHoldInput(sim, typeof (limited.body as { intent?: unknown }).intent === "string" ? (limited.body as { intent: string }).intent : undefined),
     }), { headers: { "content-type": "application/json" } });
   } catch (e) {
     return Response.json({ error: e instanceof Error ? e.message : String(e) }, { status: 502 });

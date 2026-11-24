@@ -20,11 +20,18 @@ export type BlockReason =
   | "SimRevert"
   | "SimUnavailable"
   | "UnlimitedApprove"
+  | "MalformedApproval"
+  | "InsufficientBalance"
+  | "MissingPlanId"
   | "CounterpartyDenylisted"
   | "ZeroAddress"
   | "LookalikeAddress"
   | "NewCounterparty"
   | "CounterpartyContract"
+  | "Delegated7702"
+  | "CodeUnavailable"
+  | "BadAmount"
+  | "NotAllowlisted"
   | "BadConfig";
 
 export const normalizePlanId = (planId: string): Hex => {

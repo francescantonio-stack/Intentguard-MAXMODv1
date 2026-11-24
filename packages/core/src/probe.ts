@@ -41,20 +41,25 @@ const failEvent = (net: ProbeNetwork, reason = "SimUnavailable"): QueueEvent =>
 
 const hexToBig = (x: unknown): bigint => BigInt(typeof x === "string" ? x : "0x0");
 
-async function evmProbe(net: ProbeNetwork, rpc: JsonRpc, now: number): Promise<NetworkProbe> {
-  const t0 = now;
+const failed = (net: ProbeNetwork, error: string, now: number): NetworkProbe => ({
+  id: net.id, ok: false, error, native: net.native, rpc: net.rpc, explorer: net.explorer,
+  checkedAt: now, event: failEvent(net),
+});
+
+async function evmProbe(net: ProbeNetwork, rpc: JsonRpc, now: number, clock: () => number): Promise<NetworkProbe> {
+  const t0 = clock();
   const [chainIdHex, blockHex, gasHex] = await Promise.all([
     rpc("eth_chainId", []),
     rpc("eth_blockNumber", []),
     rpc("eth_gasPrice", []).catch(() => undefined),
   ]);
-  const latencyMs: Sourced<number> = { value: Math.max(0, Date.now() - t0), source: `round-trip ${net.rpc}` };
+  const latencyMs: Sourced<number> = { value: Math.max(0, clock() - t0), source: `round-trip ${net.rpc}` };
   const chainId = Number(hexToBig(chainIdHex));
   const blockNumber = hexToBig(blockHex);
   const header = (await rpc("eth_getBlockByNumber", [typeof blockHex === "string" ? blockHex : "latest", false])) as { timestamp?: string } | null;
   const ts = header?.timestamp ? Number(hexToBig(header.timestamp)) * 1000 : undefined;
   const blockAgeSec = ts !== undefined
-    ? { value: Math.max(0, Math.round((Date.now() - ts) / 1000)), source: `eth_getBlockByNumber(${blockNumber}) @ ${net.rpc}` }
+    ? { value: Math.max(0, Math.round((now - ts) / 1000)), source: `eth_getBlockByNumber(${blockNumber}) @ ${net.rpc}` }
     : undefined;
   const okChain = net.chainId == null || chainId === net.chainId;
   return {
@@ -64,60 +69,99 @@ async function evmProbe(net: ProbeNetwork, rpc: JsonRpc, now: number): Promise<N
     blockNumber: { value: blockNumber, source: `eth_blockNumber @ ${net.rpc}` },
     blockAgeSec, latencyMs,
     gasPrice: gasHex !== undefined ? { value: hexToBig(gasHex), source: `eth_gasPrice @ ${net.rpc}` } : undefined,
-    native: net.native, rpc: net.rpc, explorer: net.explorer, checkedAt: Date.now(),
+    native: net.native, rpc: net.rpc, explorer: net.explorer, checkedAt: now,
   };
 }
 
-async function nearProbe(net: ProbeNetwork, rpc: JsonRpc, now: number): Promise<NetworkProbe> {
-  const t0 = now;
-  const st = (await rpc("status", [])) as { chain_id?: string; sync_info?: { latest_block_height?: number; latest_block_time?: string } };
-  const latencyMs: Sourced<number> = { value: Math.max(0, Date.now() - t0), source: `round-trip ${net.rpc}` };
-  const height = st.sync_info?.latest_block_height;
-  const t = st.sync_info?.latest_block_time ? Date.parse(st.sync_info.latest_block_time) : undefined;
+async function nearProbe(net: ProbeNetwork, rpc: JsonRpc, now: number, clock: () => number): Promise<NetworkProbe> {
+  const t0 = clock();
+  let st: unknown;
+  try {
+    st = await rpc("status", []);
+  } catch (e) {
+    return failed(net, e instanceof Error ? e.message : String(e), now);
+  }
+  const latencyMs: Sourced<number> = { value: Math.max(0, clock() - t0), source: `round-trip ${net.rpc}` };
+  if (!st || typeof st !== "object") return { ...failed(net, "status non valido", now), latencyMs };
+  const info = (st as { chain_id?: unknown; sync_info?: { latest_block_height?: unknown; latest_block_time?: unknown } }).sync_info;
+  const chainIdRaw = (st as { chain_id?: unknown }).chain_id;
+  const height = info?.latest_block_height;
+  if (typeof height !== "number" || !Number.isFinite(height) || height < 0) {
+    return { ...failed(net, "status incompleto: manca latest_block_height", now), latencyMs };
+  }
+  const t = typeof info?.latest_block_time === "string" ? Date.parse(info.latest_block_time) : undefined;
   return {
     id: net.id, ok: true,
-    chainId: st.chain_id ? { value: 0, source: `status.chain_id=${st.chain_id} @ ${net.rpc}` } : undefined,
-    blockNumber: height !== undefined ? { value: BigInt(height), source: `status.sync_info.latest_block_height @ ${net.rpc}` } : undefined,
-    blockAgeSec: t ? { value: Math.max(0, Math.round((Date.now() - t) / 1000)), source: `status.sync_info.latest_block_time @ ${net.rpc}` } : undefined,
-    latencyMs, native: net.native, rpc: net.rpc, explorer: net.explorer, checkedAt: Date.now(),
+    chainId: typeof chainIdRaw === "string" ? { value: 0, source: `status.chain_id=${chainIdRaw} @ ${net.rpc}` } : undefined,
+    blockNumber: { value: BigInt(height), source: `status.sync_info.latest_block_height @ ${net.rpc}` },
+    blockAgeSec: t && Number.isFinite(t) ? { value: Math.max(0, Math.round((now - t) / 1000)), source: `status.sync_info.latest_block_time @ ${net.rpc}` } : undefined,
+    latencyMs, native: net.native, rpc: net.rpc, explorer: net.explorer, checkedAt: now,
+  };
+}
+
+export type ProbeFetch = (input: string, init: { method: string; headers: Record<string, string>; body: string; signal: AbortSignal }) => Promise<{ ok: boolean; status: number; json: () => Promise<unknown> }>;
+
+/**
+ * Read-only JSON-RPC over fetch. Uses AbortController for the timeout and rejects a non-OK HTTP status.
+ * `fetchImpl` is injectable for tests (no network).
+ */
+export function createProbeRpc(net: ProbeNetwork, timeoutMs = PROBE_DEFAULTS.timeoutMs, fetchImpl: ProbeFetch = fetch as unknown as ProbeFetch): JsonRpc {
+  return async (method, params = []) => {
+    const ctrl = new AbortController();
+    const timer = setTimeout(() => ctrl.abort(), timeoutMs);
+    try {
+      const res = await fetchImpl(net.rpc, {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ jsonrpc: "2.0", id: 1, method, params }),
+        signal: ctrl.signal,
+      });
+      if (!res.ok) throw new Error(`HTTP ${res.status}`);
+      const body = (await res.json()) as { result?: unknown; error?: { message?: string } };
+      if (body && typeof body === "object" && body.error) throw new Error(body.error.message ?? JSON.stringify(body.error));
+      return body?.result;
+    } finally {
+      clearTimeout(timer);
+    }
   };
 }
 
 /** Probe one or all known testnets. `rpcFor` is injected in tests; default uses public RPC (read-only). */
-export async function probeNetworks(o: { rpcFor?: (net: ProbeNetwork) => JsonRpc; ids?: string[]; now?: number; config?: { timeoutMs?: unknown } } = {}): Promise<NetworkProbe[]> {
-  const now = o.now ?? Date.now();
-  const list = PROBE_NETWORKS.filter((n) => !o.ids || o.ids.includes(n.id));
+export async function probeNetworks(o: {
+  rpcFor?: (net: ProbeNetwork) => JsonRpc;
+  ids?: string[];
+  now?: number;
+  clock?: () => number;
+  config?: { timeoutMs?: unknown };
+  fetchImpl?: ProbeFetch;
+} = {}): Promise<NetworkProbe[]> {
+  const clock = o.clock ?? Date.now;
+  const now = o.now !== undefined ? o.now : clock();
+  const list = (o.ids === undefined ? PROBE_NETWORKS : PROBE_NETWORKS.filter((n) => o.ids!.includes(n.id))) as ProbeNetwork[];
+  if (o.now !== undefined && !Number.isFinite(o.now)) {
+    return list.map((net) => ({
+      id: net.id, ok: false, error: "BAD_NOW: now non è un numero finito",
+      native: net.native, rpc: net.rpc, explorer: net.explorer, checkedAt: Date.now(),
+      event: failEvent(net, "BadConfig"),
+    }));
+  }
   const cap = tightenNumber(o.config?.timeoutMs, PROBE_DEFAULTS.timeoutMs, true);
   if (!cap.ok || (o.config !== undefined && (o.config == null || typeof o.config !== "object" || Array.isArray(o.config)))) {
     return list.map((net) => ({
       id: net.id, ok: false, error: cap.ok ? "BadConfig: config non valida" : `BadConfig: ${cap.detail}`,
-      native: net.native, rpc: net.rpc, explorer: net.explorer, checkedAt: Date.now(),
+      native: net.native, rpc: net.rpc, explorer: net.explorer, checkedAt: now,
       event: failEvent(net, "BadConfig"),
     }));
   }
   const timeoutMs = cap.value;
   const out: NetworkProbe[] = [];
   for (const net of list) {
-    const rpc = o.rpcFor?.(net) ?? defaultRpc(net, timeoutMs);
+    const rpc = o.rpcFor?.(net) ?? createProbeRpc(net, timeoutMs, o.fetchImpl);
     try {
-      out.push(net.kind === "near" ? await nearProbe(net, rpc, now) : await evmProbe(net, rpc, now));
+      out.push(net.kind === "near" ? await nearProbe(net, rpc, now, clock) : await evmProbe(net, rpc, now, clock));
     } catch (e) {
-      out.push({ id: net.id, ok: false, error: e instanceof Error ? e.message : String(e), native: net.native, rpc: net.rpc, explorer: net.explorer, checkedAt: Date.now(), event: failEvent(net) });
+      out.push(failed(net, e instanceof Error ? e.message : String(e), now));
     }
   }
   return out;
-}
-
-function defaultRpc(net: ProbeNetwork, timeoutMs = PROBE_DEFAULTS.timeoutMs): JsonRpc {
-  return async (method, params = []) => {
-    const res = await fetch(net.rpc, {
-      method: "POST",
-      headers: { "content-type": "application/json" },
-      body: JSON.stringify({ jsonrpc: "2.0", id: 1, method, params }),
-      signal: AbortSignal.timeout(timeoutMs),
-    });
-    const body = (await res.json()) as { result?: unknown; error?: { message?: string } };
-    if (body.error) throw new Error(body.error.message ?? JSON.stringify(body.error));
-    return body.result;
-  };
 }

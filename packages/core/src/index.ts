@@ -10,5 +10,6 @@ export * from "./describe";
 export * from "./simulate";
 export * from "./probe";
 export * from "./redact";
+/** QueueEvent e BlockReason: fonte unica (non ridefinirli altrove). */
 export * from "./events";
 export * from "./limits";

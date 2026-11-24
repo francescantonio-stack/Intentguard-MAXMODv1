@@ -4,7 +4,7 @@ const SECRET_KEY = /^(authorization|bearer|jwt|auth|recovery_phrase|sig|sk|pk|se
 /** Fields that may stay visible even when the value looks like 0x+64 hex. Exact names only — never widen. */
 export const KEEP_HEX = new Set(["planhash", "txhash", "transactionhash", "blockhash", "root", "merkleroot", "planid"]);
 const ALLOW_KEY = /^(tokenIn|tokenOut|tokenAddress|tokenSymbol|signatureCount|seededAt|passed)$/i;
-const SENSITIVE_SUB = /key|secret|priv|seed|mnemonic|password/i;
+const SENSITIVE_SUB = /key|secret|priv|seed|mnemonic|password|salt/i;
 const HEX64 = /^0x[0-9a-fA-F]{64}$/;
 const HEX40 = /^0x[0-9a-fA-F]{40}$/;
 const JWT = /^eyJ[A-Za-z0-9_-]+\./;

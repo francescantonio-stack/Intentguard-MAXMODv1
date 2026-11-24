@@ -1,5 +1,5 @@
 import {
-  decodeErrorResult, decodeFunctionData, getAddress, isAddress, maxUint256, stringToHex,
+  decodeErrorResult, decodeFunctionData, getAddress, isAddress, maxUint256, stringToHex, toFunctionSelector,
   type Abi, type Address, type Hex,
 } from "viem";
 import { erc20Abi, planExecutorAbi } from "./abi";
@@ -12,8 +12,9 @@ import { tightenBigint } from "./limits";
  * Never signs, never sends. Every number carries its source (see `Sourced`).
  * Fail-closed: missing or invalid input returns ok:false with a reason — never throws, never a silent ok.
  *
- * Limits: decodes only the TOP-LEVEL calldata (ERC20 transfer/transferFrom/approve). Internal transfers made by
- * other contracts are not traced (Monad testnet public RPC has no debug_traceCall).
+ * Limits: decodes only the TOP-LEVEL calldata (ERC20 transfer/transferFrom/approve, increaseAllowance,
+ * EIP-2612 and DAI permit, setApprovalForAll). Internal transfers made by other contracts are not traced
+ * (Monad testnet public RPC has no debug_traceCall). Unlimited or malformed approvals are blocked.
  */
 
 /** A number plus where it came from (idea: PurpleIris). */
@@ -42,7 +43,16 @@ export type TokenEffect =
   | { kind: "transfer"; token: Address; from: Address; to: Address; amount: Sourced<bigint> }
   | { kind: "approve"; token: Address; owner: Address; spender: Address; amount: Sourced<bigint>; unlimited: boolean };
 
-export type Warning = { code: "UNLIMITED_APPROVE" | "UNKNOWN_CALLDATA" | "GAS_PRICE_UNKNOWN"; detail: string };
+export type Warning = { code: "UNLIMITED_APPROVE" | "MALFORMED_APPROVAL" | "UNKNOWN_CALLDATA" | "GAS_PRICE_UNKNOWN"; detail: string };
+
+export type SimBlockReason =
+  | "SimRevert"
+  | "SimUnavailable"
+  | "UnlimitedApprove"
+  | "MalformedApproval"
+  | "InsufficientBalance"
+  | "MissingPlanId"
+  | "BadConfig";
 
 export type SimulationResult = {
   ok: boolean;
@@ -59,6 +69,8 @@ export type SimulationResult = {
   warnings: Warning[];
   lines: string[];
   simulatedAt: number;
+  /** Set when ok === false: preferred QueueEvent.reason (not parsed from free text). */
+  blockReason?: SimBlockReason;
 };
 
 /** Success is only `ok === true`. `{ok:0}`, `{success:false}` and missing ok all count as failure. */
@@ -70,6 +82,13 @@ const ERRORS_ABI = [
   { type: "error", name: "Error", inputs: [{ name: "message", type: "string" }] },
   { type: "error", name: "Panic", inputs: [{ name: "code", type: "uint256" }] },
 ] as Abi;
+
+const inferBlockReason = (reason: string, extra?: SimBlockReason): SimBlockReason => {
+  if (extra) return extra;
+  if (reason.startsWith("BadConfig")) return "BadConfig";
+  if (reason.startsWith("BAD_") || reason.startsWith("CHECK_ERROR")) return "SimUnavailable";
+  return "SimRevert";
+};
 
 const blocked = (reason: string, extra: Partial<SimulationResult> = {}): SimulationResult => ({
   chainId: extra.chainId ?? 0,
@@ -85,6 +104,7 @@ const blocked = (reason: string, extra: Partial<SimulationResult> = {}): Simulat
   gasPrice: extra.gasPrice,
   ok: false,
   revert: extra.revert ?? { reason },
+  blockReason: inferBlockReason(reason, extra.blockReason),
 });
 
 /** Parse a required integer (accepts bigint, incl. 0n, and numeric strings). Rejects NaN/Infinity/null. */
@@ -131,7 +151,56 @@ export function revertReason(e: unknown): { reason: string; raw?: Hex } {
   return { reason: msg ?? "execution reverted (no reason)", raw };
 }
 
-/** Decode the top-level call: ERC20 transfer / transferFrom / approve. Never throws. */
+const approvalFns = [
+  { type: "function", name: "approve", stateMutability: "nonpayable",
+    inputs: [{ name: "spender", type: "address" }, { name: "amount", type: "uint256" }], outputs: [{ type: "bool" }] },
+  { type: "function", name: "increaseAllowance", stateMutability: "nonpayable",
+    inputs: [{ name: "spender", type: "address" }, { name: "addedValue", type: "uint256" }], outputs: [{ type: "bool" }] },
+  { type: "function", name: "permit", stateMutability: "nonpayable",
+    inputs: [
+      { name: "owner", type: "address" }, { name: "spender", type: "address" }, { name: "value", type: "uint256" },
+      { name: "deadline", type: "uint256" }, { name: "v", type: "uint8" }, { name: "r", type: "bytes32" }, { name: "s", type: "bytes32" },
+    ], outputs: [] },
+  { type: "function", name: "permit", stateMutability: "nonpayable",
+    inputs: [
+      { name: "holder", type: "address" }, { name: "spender", type: "address" }, { name: "nonce", type: "uint256" },
+      { name: "expiry", type: "uint256" }, { name: "allowed", type: "bool" }, { name: "v", type: "uint8" }, { name: "r", type: "bytes32" }, { name: "s", type: "bytes32" },
+    ], outputs: [] },
+  { type: "function", name: "setApprovalForAll", stateMutability: "nonpayable",
+    inputs: [{ name: "operator", type: "address" }, { name: "approved", type: "bool" }], outputs: [] },
+] as const;
+
+/** Selectors that, if truncated or malformed, must block (fail-closed). */
+export const APPROVAL_SELECTORS: ReadonlySet<string> = new Set(approvalFns.map((f) => toFunctionSelector(f).toLowerCase()));
+
+const tokenAbi = [
+  ...erc20Abi,
+  { type: "function", name: "transferFrom", stateMutability: "nonpayable",
+    inputs: [{ name: "from", type: "address" }, { name: "to", type: "address" }, { name: "amount", type: "uint256" }],
+    outputs: [{ type: "bool" }] },
+  ...approvalFns,
+] as const;
+
+const isApprovalSelector = (data: string): boolean =>
+  data.length >= 10 && APPROVAL_SELECTORS.has(data.slice(0, 10).toLowerCase());
+
+const pushApprove = (
+  effects: TokenEffect[],
+  warnings: Warning[],
+  token: Address,
+  owner: Address,
+  spender: Address,
+  amount: bigint,
+  unlimited: boolean,
+  label: string,
+  unlimitedMin: bigint,
+) => {
+  const unl = unlimited || amount >= unlimitedMin;
+  effects.push({ kind: "approve", token, owner, spender: normalizeAddress(spender) as Address, amount: { value: amount, source: "calldata (decoded)" }, unlimited: unl });
+  if (unl) warnings.push({ code: "UNLIMITED_APPROVE", detail: `${label} illimitato a ${normalizeAddress(spender)} sul token ${token}` });
+};
+
+/** Decode the top-level call: transfers and approvals (approve, increaseAllowance, permit, setApprovalForAll). Never throws. */
 export function decodeTokenEffects(tx: { from?: Address; to?: Address; data?: Hex } | null | undefined, unlimitedMin: bigint = SIM_DEFAULTS.unlimitedApproveMin): { effects: TokenEffect[]; warnings: Warning[] } {
   const effects: TokenEffect[] = [];
   const warnings: Warning[] = [];
@@ -141,11 +210,8 @@ export function decodeTokenEffects(tx: { from?: Address; to?: Address; data?: He
   const token = tx.to && isAddress(tx.to) ? normalizeAddress(tx.to) : undefined;
   const sender = tx.from && isAddress(tx.from) ? normalizeAddress(tx.from) : undefined;
   if (!token || !sender) return { effects, warnings };
-  const abi = [...erc20Abi, { type: "function", name: "transferFrom", stateMutability: "nonpayable",
-    inputs: [{ name: "from", type: "address" }, { name: "to", type: "address" }, { name: "amount", type: "uint256" }],
-    outputs: [{ type: "bool" }] }] as const;
   try {
-    const d = decodeFunctionData({ abi, data: data as Hex });
+    const d = decodeFunctionData({ abi: tokenAbi as Abi, data: data as Hex });
     const src = "calldata (decoded)";
     if (d.functionName === "transfer") {
       const [to, amount] = d.args as [Address, bigint];
@@ -155,12 +221,33 @@ export function decodeTokenEffects(tx: { from?: Address; to?: Address; data?: He
       effects.push({ kind: "transfer", token, from: normalizeAddress(from) as Address, to: normalizeAddress(to) as Address, amount: { value: amount, source: src } });
     } else if (d.functionName === "approve") {
       const [spender, amount] = d.args as [Address, bigint];
-      const unlimited = amount >= unlimitedMin;
-      effects.push({ kind: "approve", token, owner: sender, spender: normalizeAddress(spender) as Address, amount: { value: amount, source: src }, unlimited });
-      if (unlimited) warnings.push({ code: "UNLIMITED_APPROVE", detail: `approve illimitato a ${normalizeAddress(spender)} sul token ${token}` });
+      pushApprove(effects, warnings, token, sender, spender, amount, false, "approve", unlimitedMin);
+    } else if (d.functionName === "increaseAllowance") {
+      const [spender, added] = d.args as [Address, bigint];
+      pushApprove(effects, warnings, token, sender, spender, added, false, "increaseAllowance", unlimitedMin);
+    } else if (d.functionName === "permit") {
+      const args = d.args as unknown[];
+      // EIP-2612: (owner, spender, value, deadline, v, r, s) — 7 args, value is bigint
+      // DAI: (holder, spender, nonce, expiry, allowed, v, r, s) — 8 args, allowed is bool
+      if (args.length === 8 && typeof args[4] === "boolean") {
+        const spender = args[1] as Address;
+        const allowed = args[4];
+        pushApprove(effects, warnings, token, sender, spender, allowed ? maxUint256 : 0n, allowed, "permit DAI", unlimitedMin);
+      } else {
+        const spender = args[1] as Address;
+        const value = args[2] as bigint;
+        pushApprove(effects, warnings, token, sender, spender, value, false, "permit", unlimitedMin);
+      }
+    } else if (d.functionName === "setApprovalForAll") {
+      const [operator, approved] = d.args as [Address, boolean];
+      pushApprove(effects, warnings, token, sender, operator, approved ? maxUint256 : 0n, approved, "setApprovalForAll", unlimitedMin);
     }
   } catch {
-    warnings.push({ code: "UNKNOWN_CALLDATA", detail: `calldata non decodificata (selettore ${String(data).slice(0, 10)})` });
+    if (isApprovalSelector(data)) {
+      warnings.push({ code: "MALFORMED_APPROVAL", detail: `calldata di approvazione malformata o troncata (selettore ${data.slice(0, 10)})` });
+    } else {
+      warnings.push({ code: "UNKNOWN_CALLDATA", detail: `calldata non decodificata (selettore ${String(data).slice(0, 10)})` });
+    }
   }
   return { effects, warnings };
 }
@@ -187,6 +274,32 @@ function parseTx(tx: unknown): { ok: true; value: ProposedTx } | { ok: false; re
   return { ok: true, value: { chainId: Number(chain.value), from: from.value, to: to.value, data: data as Hex, value: value.value } };
 }
 
+/** True when the error is an RPC/transport failure, not an on-chain revert. */
+export function isRpcFailure(e: unknown): boolean {
+  const names: string[] = [];
+  const msgs: string[] = [];
+  let hasRevertData = false;
+  for (let cur: unknown = e, i = 0; cur && typeof cur === "object" && i < 8; cur = (cur as { cause?: unknown }).cause, i++) {
+    const c = cur as { name?: unknown; message?: unknown; shortMessage?: unknown; details?: unknown; data?: unknown };
+    if (typeof c.name === "string") names.push(c.name);
+    for (const v of [c.message, c.shortMessage, c.details]) if (typeof v === "string") msgs.push(v);
+    const d = (c.data && typeof c.data === "object" && "data" in (c.data as object) ? (c.data as { data?: unknown }).data : c.data);
+    if (typeof d === "string" && /^0x[0-9a-fA-F]+$/.test(d) && d.length >= 10) hasRevertData = true;
+  }
+  const name = names.join(" ");
+  const msg = msgs.join(" ");
+  if (hasRevertData || /execution reverted|ContractFunctionReverted|CallExecutionError/i.test(`${name} ${msg}`)) {
+    // A revert can be wrapped in an HTTP error; prefer revert when calldata/error data is present
+    // or the message clearly says the call reverted.
+    if (hasRevertData || /execution reverted/i.test(msg) || /ContractFunctionReverted/i.test(name)) return false;
+  }
+  if (/TimeoutError|AbortError|HttpRequestError|RpcRequestError|InternalRpcError|WebSocketRequestError/i.test(name)) return true;
+  if (/timeout|aborted|ECONNRESET|ENOTFOUND|ECONNREFUSED|network|fetch failed|Failed to fetch|429|502|503|504|HTTP \d+/i.test(msg)) return true;
+  // No revert data and no "reverted" text: treat as infrastructure (fail-closed: SimUnavailable).
+  if (!hasRevertData && !/reverted/i.test(msg)) return true;
+  return false;
+}
+
 /** Simulate a proposed tx against the chain state, without signing. Fail-closed: never throws. */
 export async function simulateTx(tx: unknown, client: unknown, o: SimOptions = {}): Promise<SimulationResult> {
   try {
@@ -200,7 +313,7 @@ export async function simulateTx(tx: unknown, client: unknown, o: SimOptions = {
     if (!parsed.ok) return blocked(parsed.reason);
     const p = parsed.value;
     const c = client as SimClient | null;
-    if (!c || typeof c !== "object" || typeof c.call !== "function" || typeof c.estimateGas !== "function") {
+    if (!c || typeof c !== "object" || typeof c.call !== "function" || typeof c.estimateGas !== "function" || typeof c.getBalance !== "function") {
       return blocked("BAD_CLIENT: client RPC assente o non valido", { chainId: p.chainId });
     }
     const rpc = o.rpcLabel ?? `rpc chain ${p.chainId}`;
@@ -210,42 +323,90 @@ export async function simulateTx(tx: unknown, client: unknown, o: SimOptions = {
     const simulatedAt = o.now ?? Date.now();
     const base = { chainId: p.chainId, from: p.from, to: p.to, tokenEffects: effects, warnings, simulatedAt };
 
-    const balance = await c.getBalance({ address: p.from }).then(
-      (v) => (typeof v === "bigint" ? { value: v, source: `eth_getBalance @ ${rpc}` } : undefined),
-      () => undefined,
-    );
+    if (warnings.some((w) => w.code === "MALFORMED_APPROVAL")) {
+      const detail = warnings.find((w) => w.code === "MALFORMED_APPROVAL")!.detail;
+      return blocked(detail, { ...base, blockReason: "MalformedApproval" });
+    }
+
+    let balance: Sourced<bigint> | undefined;
+    try {
+      const v = await c.getBalance({ address: p.from });
+      if (typeof v !== "bigint" || v < 0n) {
+        return blocked("BAD_VALUE: eth_getBalance ha restituito un valore non valido", { ...base, blockReason: "SimUnavailable" });
+      }
+      balance = { value: v, source: `eth_getBalance @ ${rpc}` };
+    } catch (e) {
+      const msg = e instanceof Error ? e.message : String(e);
+      return blocked(`SimUnavailable: eth_getBalance fallito (${msg})`, { ...base, blockReason: "SimUnavailable" });
+    }
 
     try {
       await c.call(args);
     } catch (e) {
       const revert = revertReason(e);
-      return { ...base, ok: false, revert, nativeBalanceBefore: balance,
+      const unavailable = isRpcFailure(e);
+      return {
+        ...base, ok: false, revert, nativeBalanceBefore: balance,
         nativeDelta: { value: 0n, source: "nessun effetto: la tx fallirebbe" },
-        lines: [`❌ Fallirebbe: ${revert.reason}`, ...warnings.map((w) => `⚠️ ${w.detail}`)] };
+        blockReason: unavailable ? "SimUnavailable" : "SimRevert",
+        lines: [`❌ Fallirebbe: ${revert.reason}`, ...warnings.map((w) => `⚠️ ${w.detail}`)],
+      };
     }
 
     let gas: Sourced<bigint> | undefined;
     try {
       const g = await c.estimateGas(args);
-      if (typeof g !== "bigint" || g < 0n) return blocked("BAD_VALUE: eth_estimateGas ha restituito un valore non valido", base);
+      if (typeof g !== "bigint" || g < 0n) return blocked("BAD_VALUE: eth_estimateGas ha restituito un valore non valido", { ...base, nativeBalanceBefore: balance });
       gas = { value: g, source: `eth_estimateGas @ ${rpc}` };
     } catch (e) {
       const revert = revertReason(e);
-      return { ...base, ok: false, revert, nativeBalanceBefore: balance,
+      const unavailable = isRpcFailure(e);
+      return {
+        ...base, ok: false, revert, nativeBalanceBefore: balance,
         nativeDelta: { value: 0n, source: "nessun effetto: stima del gas fallita" },
-        lines: [`❌ Stima gas fallita: ${revert.reason}`] };
+        blockReason: unavailable ? "SimUnavailable" : "SimRevert",
+        lines: [`❌ Stima gas fallita: ${revert.reason}`],
+      };
     }
     let gasPrice: Sourced<bigint> | undefined;
     if (c.getGasPrice) {
       try {
         const gp = await c.getGasPrice();
-        if (typeof gp !== "bigint" || gp < 0n) return blocked("BAD_VALUE: eth_gasPrice ha restituito un valore non valido", base);
+        if (typeof gp !== "bigint" || gp < 0n) return blocked("BAD_VALUE: eth_gasPrice ha restituito un valore non valido", { ...base, nativeBalanceBefore: balance, gas });
         gasPrice = { value: gp, source: `eth_gasPrice @ ${rpc}` };
       } catch { /* optional */ }
     }
     if (!gasPrice) warnings.push({ code: "GAS_PRICE_UNKNOWN", detail: "prezzo del gas non disponibile: costo gas escluso" });
 
     const fee = gasPrice ? gas.value * gasPrice.value : 0n;
+    const needed = value + fee;
+    if (balance.value < needed) {
+      const nativeDelta = { value: -(needed), source: gasPrice ? "calcolo: -(value + gas × gasPrice)" : "calcolo: -(value)" };
+      return {
+        ...base, ok: false, gas, gasPrice, nativeBalanceBefore: balance, nativeDelta,
+        blockReason: "InsufficientBalance",
+        revert: { reason: `InsufficientBalance: saldo ${balance.value} < value+fee ${needed}` },
+        lines: [`❌ Saldo insufficiente: ${fmt(balance.value)} < ${fmt(needed)} (value+fee) [${balance.source}]`],
+      };
+    }
+
+    if (warnings.some((w) => w.code === "UNLIMITED_APPROVE")) {
+      const nativeDelta = { value: -(needed), source: gasPrice ? "calcolo: -(value + gas × gasPrice)" : "calcolo: -(value)" };
+      return {
+        ...base, ok: false, gas, gasPrice, nativeBalanceBefore: balance, nativeDelta,
+        blockReason: "UnlimitedApprove",
+        revert: { reason: "UnlimitedApprove" },
+        lines: [
+          `❌ Blocco: approvazione illimitata`,
+          `Gas stimato: ${fmt(gas.value)} [${gas.source}]`,
+          ...effects.map((e) => e.kind === "transfer"
+            ? `Trasferimento token ${e.token}: ${fmt(e.amount.value)} da ${e.from} a ${e.to} [${e.amount.source}]`
+            : `Approve token ${e.token}: ${e.unlimited ? "ILLIMITATO" : fmt(e.amount.value)} a ${e.spender} [${e.amount.source}]`),
+          ...warnings.map((w) => `⚠️ ${w.detail}`),
+        ],
+      };
+    }
+
     const nativeDelta = { value: -(value + fee), source: gasPrice ? "calcolo: -(value + gas × gasPrice)" : "calcolo: -(value)" };
     const lines = [
       `✅ Riuscirebbe. Gas stimato: ${fmt(gas.value)} [${gas.source}]`,
@@ -271,10 +432,11 @@ export const reasonLabel = (s: string): Hex => stringToHex(s.slice(0, 31), { siz
  * kind "blocked", planId lowercase, amount as known bigint (never rewritten to 0n).
  * Codes: SimRevert | SimUnavailable | UnlimitedApprove.
  */
-export function toActionBlocked(sim: unknown, planId: Hex, o: { ts?: number; nativeValue?: bigint } = {}): QueueEvent | null {
-  let id: Hex;
-  try { id = normalizePlanId(planId); }
-  catch { return blockedEvent({ planId: "0x" + "00".repeat(32), reason: "SimUnavailable", amount: 0n, ts: o.ts, id: null }); }
+export function toActionBlocked(sim: unknown, planId?: unknown, o: { ts?: number; nativeValue?: bigint } = {}): QueueEvent | null {
+  let id: Hex | undefined;
+  if (typeof planId === "string" && planId.trim()) {
+    try { id = normalizePlanId(planId); } catch { id = undefined; }
+  }
 
   const knownAmount = (s: SimulationResult | undefined): bigint => {
     let amount = 0n;
@@ -287,25 +449,65 @@ export function toActionBlocked(sim: unknown, planId: Hex, o: { ts?: number; nat
     return amount;
   };
 
-  if (!sim || typeof sim !== "object") {
-    return blockedEvent({ planId: id, reason: "SimUnavailable", amount: knownAmount(undefined), ts: o.ts });
-  }
+  const emit = (reason: string, s: SimulationResult | undefined) => {
+    const amount = knownAmount(s);
+    const ts = o.ts ?? s?.simulatedAt;
+    // A missing/invalid planId must not hide a failure: the event itself is MissingPlanId.
+    if (!id) return blockedEvent({ planId: "0x" + "00".repeat(32), reason: "MissingPlanId", amount, ts, id: null });
+    return blockedEvent({ planId: id, reason, amount, ts });
+  };
+
+  if (!sim || typeof sim !== "object") return emit("SimUnavailable", undefined);
   const s = sim as SimulationResult;
-  const amount = knownAmount(s);
   if (!simSucceeded(s)) {
+    if (s.blockReason) return emit(s.blockReason, s);
     const reasonText = s.revert?.reason ?? "";
-    const unavailable = reasonText.startsWith("BAD_") || reasonText.startsWith("CHECK_ERROR") || reasonText.startsWith("BadConfig");
-    return blockedEvent({
-      planId: id,
-      reason: reasonText.startsWith("BadConfig") ? "BadConfig" : unavailable ? "SimUnavailable" : "SimRevert",
-      amount,
-      ts: o.ts ?? s.simulatedAt,
-    });
+    const reason = reasonText.startsWith("BadConfig") ? "BadConfig"
+      : reasonText.startsWith("BAD_") || reasonText.startsWith("CHECK_ERROR") || reasonText.startsWith("SimUnavailable") ? "SimUnavailable"
+      : reasonText.startsWith("InsufficientBalance") ? "InsufficientBalance"
+      : reasonText === "UnlimitedApprove" ? "UnlimitedApprove"
+      : "SimRevert";
+    return emit(reason, s);
   }
   if ((s.warnings ?? []).some((w) => w.code === "UNLIMITED_APPROVE")) {
-    return blockedEvent({ planId: id, reason: "UnlimitedApprove", amount, ts: o.ts ?? s.simulatedAt });
+    return emit("UnlimitedApprove", s);
+  }
+  if ((s.warnings ?? []).some((w) => w.code === "MALFORMED_APPROVAL")) {
+    return emit("MalformedApproval", s);
   }
   return null;
+}
+
+/** Validate a JSON API body for /api/simulate. Invalid data or value → 400; never coerces bad data to "0x". */
+export function checkSimulateApiInput(body: unknown):
+  | { ok: true; tx: ProposedTx; planId?: Hex; planIdMissing: boolean }
+  | { ok: false; status: 400; error: string } {
+  if (body == null || typeof body !== "object" || Array.isArray(body)) {
+    return { ok: false, status: 400, error: "invalid JSON" };
+  }
+  const t = body as Record<string, unknown>;
+  if (t.data !== undefined && t.data !== null && t.data !== "") {
+    if (typeof t.data !== "string" || !/^0x[0-9a-fA-F]*$/.test(t.data) || t.data.length % 2 !== 0) {
+      return { ok: false, status: 400, error: "data must be 0x hex" };
+    }
+  }
+  const value = t.value === undefined || t.value === "" ? 0n : undefined;
+  const parsed = parseTx({
+    ...t,
+    data: t.data === undefined || t.data === null || t.data === "" ? "0x" : t.data,
+    value: value === 0n ? 0n : t.value,
+  });
+  if (!parsed.ok) return { ok: false, status: 400, error: parsed.reason };
+  let planId: Hex | undefined;
+  let planIdMissing = true;
+  if (t.planId !== undefined && t.planId !== null && t.planId !== "") {
+    if (typeof t.planId !== "string" || !/^0x[0-9a-fA-F]{64}$/.test(t.planId)) {
+      return { ok: false, status: 400, error: "MissingPlanId" };
+    }
+    planId = t.planId.toLowerCase() as Hex;
+    planIdMissing = false;
+  }
+  return { ok: true, tx: parsed.value, planId, planIdMissing };
 }
 
 /** Hunter's success-odds: one dry-run entry plus gasNeeded for `state`. `ok` is only true if sim.ok === true. */
