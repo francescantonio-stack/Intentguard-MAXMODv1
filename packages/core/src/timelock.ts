@@ -9,39 +9,18 @@
  * Unpause is itself time-locked and may be requested only by the owner or a guardian.
  */
 import type { QueueEvent } from "./events";
+import { asAmount, asFiniteNumber, guardEvent, lowerPlanId, upperToken, ZERO_PLAN } from "./guards";
 
 
 type GuardEvent = QueueEvent;
 
-export const lowerPlanId = (id: string): `0x${string}` => {
-  const s = id.trim();
-  return (s.startsWith("0x") || s.startsWith("0X") ? s : `0x${s}`).toLowerCase() as `0x${string}`;
-};
+const ZERO_HASH = ZERO_PLAN;
+const safePlanId = (id: unknown): `0x${string}` => lowerPlanId(id) ?? ZERO_PLAN;
 
-export const upperToken = (t: string) => t.toUpperCase();
+/** Hard maxima for operator-supplied durations. null/missing → module default. Above the max → BAD_CONFIG (never clamped). */
+const TIMELOCK_DELAY_MAX_MS = 30 * 86_400_000; // 30 days (delayMs, unpauseDelayMs, ttlMs)
+const TIMELOCK_WINDOW_MAX_MS = 7 * 86_400_000; // 7 days (windowMs)
 
-export function guardEvent(o: { kind: QueueEvent["kind"]; planId: string; reason: string; amount: bigint; now: number; id?: string | null }): QueueEvent {
-  const ts = Number.isFinite(o.now) ? new Date(o.now).toISOString() : new Date().toISOString();
-  const amount = typeof o.amount === "bigint" ? o.amount : 0n;
-  return { kind: o.kind, planId: lowerPlanId(o.planId), reason: o.reason, amount, ts, id: o.id ?? null };
-}
-
-export function asFiniteNumber(v: unknown): number | undefined {
-  if (typeof v === "bigint") {
-    if (v > BigInt(Number.MAX_SAFE_INTEGER) || v < BigInt(Number.MIN_SAFE_INTEGER)) return undefined;
-    return Number(v);
-  }
-  if (typeof v === "number" && Number.isFinite(v)) return v;
-  return undefined;
-}
-
-export function asAmount(v: unknown): bigint | undefined {
-  if (typeof v === "bigint") return v;
-  if (typeof v === "number" && Number.isFinite(v) && Number.isInteger(v)) return BigInt(v);
-  return undefined;
-}
-
-const ZERO_HASH = ("0x" + "00".repeat(32)) as `0x${string}`;
 const PLAN_ID_RE = /^0x[0-9a-f]{64}$/;
 export const DEFAULT_SENSITIVE = ["policy_change", "limit_change", "unlimited_approve", "add_signer"] as const;
 export const WINDOW_MS = 86_400_000;
@@ -95,9 +74,10 @@ export class SentinelError extends Error {
   }
 }
 
-function positiveFinite(v: unknown): number | undefined {
+function positiveFinite(v: unknown, max?: number): number | null {
   const n = asFiniteNumber(v);
-  if (n === undefined || n <= 0) return undefined;
+  if (n == null || n <= 0) return null;
+  if (max !== undefined && n > max) return null;
   return n;
 }
 
@@ -110,54 +90,77 @@ export class Sentinel {
   private unpauseAt: number | null = null;
   private unpauseBy: string | null = null;
   private lastNow: number | undefined;
-  private readonly owner!: string;
-  private readonly guardians!: Set<string>;
-  private readonly delayMs!: number;
-  private readonly unpauseDelayMs!: number;
-  private readonly ttlMs!: number;
-  private readonly windowMs!: number;
-  private readonly thresholds!: Record<string, bigint>;
-  private readonly sensitive!: Set<string>;
-  private readonly nowFn!: () => number;
-  private readonly onEvent?: (e: QueueEvent) => void;
+  private owner!: string;
+  private guardians!: Set<string>;
+  private delayMs!: number;
+  private unpauseDelayMs!: number;
+  private ttlMs!: number;
+  private windowMs!: number;
+  private thresholds!: Record<string, bigint>;
+  private sensitive!: Set<string>;
+  private nowFn!: () => number;
+  private onEvent?: (e: QueueEvent) => void;
+
+  /** Set when construction config is invalid. Methods emit this and write nothing. */
+  readonly configError: QueueEvent | null = null;
 
   constructor(cfg: SentinelConfig) {
-    const emitCfg = (reason: string): never => {
+    const emitCfg = (reason: string): QueueEvent => {
       const ev = guardEvent({ kind: "blocked", planId: ZERO_HASH, reason, amount: 0n, now: Date.now(), id: null });
       cfg && typeof cfg === "object" && cfg.onEvent?.(ev);
-      throw new SentinelError("BAD_CONFIG", reason, ev);
+      return ev;
     };
-    if (!cfg || typeof cfg !== "object") {
-      const ev = guardEvent({ kind: "blocked", planId: ZERO_HASH, reason: "BAD_CONFIG", amount: 0n, now: Date.now(), id: null });
-      throw new SentinelError("BAD_CONFIG", "BAD_CONFIG", ev);
+    const fault = (reason: string) => {
+      (this as { configError: QueueEvent | null }).configError = emitCfg(reason);
+      this.delayMs = 1;
+      this.unpauseDelayMs = 1;
+      this.ttlMs = WINDOW_MS;
+      this.windowMs = WINDOW_MS;
+      this.owner = "";
+      this.guardians = new Set();
+      this.thresholds = {};
+      this.sensitive = new Set();
+      this.nowFn = () => Date.now();
+      this.onEvent = cfg && typeof cfg === "object" ? cfg.onEvent : undefined;
+    };
+    if (!cfg || typeof cfg !== "object") { fault("BAD_CONFIG"); return; }
+    const delayMs = positiveFinite(cfg.delayMs, TIMELOCK_DELAY_MAX_MS);
+    if (delayMs == null) { fault("BAD_CONFIG: delayMs"); return; }
+    if (typeof cfg.owner !== "string" || !cfg.owner) { fault("BAD_CONFIG: owner"); return; }
+    if ("unpauseDelayMs" in cfg && cfg.unpauseDelayMs !== undefined && cfg.unpauseDelayMs !== null
+        && positiveFinite(cfg.unpauseDelayMs, TIMELOCK_DELAY_MAX_MS) == null) {
+      fault("BAD_CONFIG: unpauseDelayMs"); return;
     }
-    const delayMs = positiveFinite(cfg.delayMs);
-    if (delayMs === undefined) return emitCfg("BAD_CONFIG: delayMs");
-    if (typeof cfg.owner !== "string" || !cfg.owner) emitCfg("BAD_CONFIG: owner");
-    if ("unpauseDelayMs" in cfg && cfg.unpauseDelayMs !== undefined && positiveFinite(cfg.unpauseDelayMs) === undefined) {
-      emitCfg("BAD_CONFIG: unpauseDelayMs");
+    if ("ttlMs" in cfg && cfg.ttlMs !== undefined && cfg.ttlMs !== null
+        && positiveFinite(cfg.ttlMs, TIMELOCK_DELAY_MAX_MS) == null) {
+      fault("BAD_CONFIG: ttlMs"); return;
     }
-    if ("ttlMs" in cfg && cfg.ttlMs !== undefined && positiveFinite(cfg.ttlMs) === undefined) {
-      emitCfg("BAD_CONFIG: ttlMs");
+    if ("windowMs" in cfg && cfg.windowMs !== undefined && cfg.windowMs !== null
+        && positiveFinite(cfg.windowMs, TIMELOCK_WINDOW_MAX_MS) == null) {
+      fault("BAD_CONFIG: windowMs"); return;
     }
-    if ("windowMs" in cfg && cfg.windowMs !== undefined && positiveFinite(cfg.windowMs) === undefined) {
-      emitCfg("BAD_CONFIG: windowMs");
-    }
-    if (cfg.guardians !== undefined && !Array.isArray(cfg.guardians)) emitCfg("BAD_CONFIG: guardians");
+    if (cfg.guardians !== undefined && !Array.isArray(cfg.guardians)) { fault("BAD_CONFIG: guardians"); return; }
+    if (cfg.sensitive !== undefined && !Array.isArray(cfg.sensitive)) { fault("BAD_CONFIG: sensitive"); return; }
     if (cfg.thresholds !== undefined) {
-      if (!cfg.thresholds || typeof cfg.thresholds !== "object" || Array.isArray(cfg.thresholds)) emitCfg("BAD_CONFIG: thresholds");
+      if (!cfg.thresholds || typeof cfg.thresholds !== "object" || Array.isArray(cfg.thresholds)) { fault("BAD_CONFIG: thresholds"); return; }
       for (const v of Object.values(cfg.thresholds)) {
-        if (typeof v !== "bigint" || v < 0n) emitCfg("BAD_CONFIG: thresholds");
+        if (typeof v !== "bigint" || v < 0n) { fault("BAD_CONFIG: thresholds"); return; }
       }
     }
     this.delayMs = delayMs;
-    this.unpauseDelayMs = cfg.unpauseDelayMs !== undefined ? positiveFinite(cfg.unpauseDelayMs)! : delayMs;
-    this.ttlMs = cfg.ttlMs !== undefined ? positiveFinite(cfg.ttlMs)! : WINDOW_MS;
-    this.windowMs = cfg.windowMs !== undefined ? positiveFinite(cfg.windowMs)! : WINDOW_MS;
+    this.unpauseDelayMs = cfg.unpauseDelayMs !== undefined && cfg.unpauseDelayMs !== null
+      ? positiveFinite(cfg.unpauseDelayMs, TIMELOCK_DELAY_MAX_MS)! : delayMs;
+    this.ttlMs = cfg.ttlMs !== undefined && cfg.ttlMs !== null
+      ? positiveFinite(cfg.ttlMs, TIMELOCK_DELAY_MAX_MS)! : WINDOW_MS;
+    this.windowMs = cfg.windowMs !== undefined && cfg.windowMs !== null
+      ? positiveFinite(cfg.windowMs, TIMELOCK_WINDOW_MAX_MS)! : WINDOW_MS;
     this.owner = cfg.owner.toLowerCase();
     this.guardians = new Set((cfg.guardians ?? []).map((g) => g.toLowerCase()));
     this.thresholds = {};
-    for (const [k, v] of Object.entries(cfg.thresholds ?? {})) this.thresholds[upperToken(k)] = v;
+    for (const [k, v] of Object.entries(cfg.thresholds ?? {})) {
+      const tok = upperToken(k);
+      if (tok) this.thresholds[tok] = v;
+    }
     this.sensitive = new Set((cfg.sensitive ?? DEFAULT_SENSITIVE).map((s) => s.toLowerCase()));
     this.nowFn = cfg.now ?? (() => Date.now());
     this.onEvent = cfg.onEvent;
@@ -168,35 +171,51 @@ export class Sentinel {
     const w = who.toLowerCase();
     return w === this.owner || this.guardians.has(w);
   };
-  historyOf = (planId: string) => this.history.get(lowerPlanId(planId));
+  historyOf = (planId: string) => this.history.get(safePlanId(planId));
 
   /**
    * Drops the live row only. History and seen planIds stay, so a recreate with the
    * same id cannot reset replay or limits.
    */
   remove(planIdRaw: string): void {
-    const now = this.now();
-    const planId = typeof planIdRaw === "string" ? lowerPlanId(planIdRaw) : ZERO_HASH;
-    this.rows.delete(planId);
-    void now;
+    const clock = this.readNow();
+    if (!clock.ok) return;
+    const planId = lowerPlanId(planIdRaw);
+    if (planId) this.rows.delete(planId);
+  }
+
+  lookup(planIdRaw: unknown): { ok: true; history: History } | { ok: false; event: QueueEvent } {
+    const clock = this.readNow();
+    if (!clock.ok) return { ok: false, event: clock.event };
+    const now = clock.now;
+    const planId = lowerPlanId(planIdRaw);
+    if (!planId) {
+      return { ok: false, event: this.emit("blocked", ZERO_HASH, "MALFORMED", 0n, now, null) };
+    }
+    const history = this.history.get(planId);
+    if (!history) {
+      return { ok: false, event: this.emit("blocked", planId, "Unknown", 0n, now, planId) };
+    }
+    return { ok: true, history };
   }
 
   /** Whether this action must wait. Fail-closed: unknown token or bad amount => locked. */
   needsLock(kind: string, token: string, amount: bigint): boolean {
     if (this.sensitive.has(kind.toLowerCase())) return true;
-    const cap = this.thresholds[upperToken(token)];
+    const cap = this.thresholds[upperToken(token) ?? ""];
     if (cap === undefined) return true;
     return amount > cap;
   }
 
-  private now(): number {
+  private readNow(): { ok: true; now: number } | { ok: false; event: QueueEvent } {
+    if (this.configError) return { ok: false, event: this.emit("blocked", ZERO_HASH, this.configError.reason, 0n, Date.now(), null) };
     const n = asFiniteNumber(this.nowFn());
-    if (n === undefined || (this.lastNow !== undefined && n < this.lastNow)) {
+    if (n == null || (this.lastNow !== undefined && n < this.lastNow)) {
       const e = this.emit("blocked", ZERO_HASH, "BAD_NOW", 0n, Date.now(), null);
-      throw new SentinelError("BAD_NOW", "BAD_NOW", e);
+      return { ok: false, event: e };
     }
     this.lastNow = n;
-    return n;
+    return { ok: true, now: n };
   }
 
   private emit(kind: QueueEvent["kind"], planId: string, reason: string, amount: bigint, now: number, id: string | null = null): QueueEvent {
@@ -230,43 +249,49 @@ export class Sentinel {
     return r;
   }
 
-  queue(req: TimelockRequest): { ok: true; queued: boolean; earliest: number; event: QueueEvent } {
-    const now = this.now();
+  queue(req: TimelockRequest): { ok: true; queued: boolean; earliest: number; event: QueueEvent } | { ok: false; event: QueueEvent } {
+    const clock = this.readNow();
+    if (!clock.ok) return { ok: false, event: clock.event };
+    const now = clock.now;
     this.prune(now);
     if (!req || typeof req !== "object") {
       const ev = this.emit("blocked", ZERO_HASH, "MALFORMED", 0n, now, null);
-      throw new SentinelError("MALFORMED", "MALFORMED", ev);
-    }
-    if (typeof req.planId !== "string" || !PLAN_ID_RE.test(req.planId.toLowerCase())) {
-      const ev = this.emit("blocked", typeof req.planId === "string" ? lowerPlanId(req.planId) : ZERO_HASH, "MALFORMED", asAmount(req.amount) ?? 0n, now, null);
-      throw new SentinelError("MALFORMED", "MALFORMED", ev);
+      return { ok: false, event: ev };
     }
     const planId = lowerPlanId(req.planId);
+    if (!planId) {
+      const ev = this.emit("blocked", ZERO_HASH, "MALFORMED", asAmount(req.amount) ?? 0n, now, null);
+      return { ok: false, event: ev };
+    }
     const amount = asAmount(req.amount);
-    if (amount === undefined || amount < 0n) {
+    if (amount == null) {
       const ev = this.emit("blocked", planId, "MALFORMED", 0n, now, planId);
-      throw new SentinelError("MALFORMED", "MALFORMED", ev);
+      return { ok: false, event: ev };
     }
     if (typeof req.token !== "string" || !req.token || typeof req.kind !== "string" || !req.kind) {
       const ev = this.emit("blocked", planId, "MALFORMED", amount, now, planId);
-      throw new SentinelError("MALFORMED", "MALFORMED", ev);
+      return { ok: false, event: ev };
     }
     if (this.seen.has(planId) || this.history.has(planId)) {
       const h = this.history.get(planId);
       const reason = h?.status === "consumed" ? "Consumed" : h?.status === "cancelled" ? "Cancelled" : h?.status === "expired" ? "Expired" : "Replay";
       const ev = this.emit("blocked", planId, reason, amount, now, planId);
-      throw new SentinelError(reason, reason, ev);
+      return { ok: false, event: ev };
     }
     let delay = this.delayMs;
-    if ("delayMs" in req && req.delayMs !== undefined) {
-      const d = positiveFinite(req.delayMs);
-      if (d === undefined) {
+    if ("delayMs" in req && req.delayMs !== undefined && req.delayMs !== null) {
+      const d = positiveFinite(req.delayMs, TIMELOCK_DELAY_MAX_MS);
+      if (d == null) {
         const ev = this.emit("blocked", planId, "BAD_CONFIG: delayMs", amount, now, planId);
-        throw new SentinelError("BAD_CONFIG", "BAD_CONFIG: delayMs", ev);
+        return { ok: false, event: ev };
       }
       delay = Math.min(d, this.delayMs);
     }
     const token = upperToken(req.token);
+    if (!token) {
+      const ev = this.emit("blocked", planId, "MALFORMED", amount, now, planId);
+      return { ok: false, event: ev };
+    }
     const kind = req.kind.toLowerCase();
     const lock = this.needsLock(kind, token, amount);
     const earliest = lock ? now + delay : now;
@@ -284,24 +309,24 @@ export class Sentinel {
   }
 
   cancel(planIdRaw: string, by: string): QueueEvent {
-    const now = this.now();
+    const clock = this.readNow();
+    if (!clock.ok) return clock.event;
+    const now = clock.now;
     this.prune(now);
-    const planId = typeof planIdRaw === "string" ? lowerPlanId(planIdRaw) : ZERO_HASH;
+    const planId = lowerPlanId(planIdRaw);
+    if (!planId) return this.emit("blocked", ZERO_HASH, "MALFORMED", 0n, now, null);
     const row = this.rows.get(planId);
     const who = typeof by === "string" ? by.toLowerCase() : "";
     if (!row) {
       const h = this.history.get(planId);
-      const ev = this.emit("blocked", planId, h ? (h.status === "consumed" ? "Consumed" : h.status === "cancelled" ? "Cancelled" : "NotCancellable") : "NotInQueue", h?.amount ?? 0n, now, planId);
-      throw new SentinelError(ev.reason, ev.reason, ev);
+      return this.emit("blocked", planId, h ? (h.status === "consumed" ? "Consumed" : h.status === "cancelled" ? "Cancelled" : "NotCancellable") : "Unknown", h?.amount ?? 0n, now, planId);
     }
     const live = this.live(row, now);
     if (live.status !== "queued") {
-      const ev = this.emit("blocked", planId, live.status === "expired" ? "Expired" : "NotCancellable", live.amount, now, planId);
-      throw new SentinelError(ev.reason, ev.reason, ev);
+      return this.emit("blocked", planId, live.status === "expired" ? "Expired" : "NotCancellable", live.amount, now, planId);
     }
     if (who !== live.requester && !this.isGuardian(who)) {
-      const ev = this.emit("blocked", planId, "Unauthorized", live.amount, now, planId);
-      throw new SentinelError("Unauthorized", "Unauthorized", ev);
+      return this.emit("blocked", planId, "Unauthorized", live.amount, now, planId);
     }
     this.remember({ ...live, status: "cancelled", decidedAt: now });
     return this.emit("rejected", planId, "Cancelled", live.amount, now, planId);
@@ -313,64 +338,59 @@ export class Sentinel {
    * After the delay, works once. After TTL, throws `Expired`.
    */
   consume(planIdRaw: string, o: { amount?: bigint; by?: string } = {}): QueueEvent {
-    const now = this.now();
+    const clock = this.readNow();
+    if (!clock.ok) return clock.event;
+    const now = clock.now;
     this.prune(now);
-    const planId = typeof planIdRaw === "string" ? lowerPlanId(planIdRaw) : ZERO_HASH;
+    const planId = lowerPlanId(planIdRaw);
+    if (!planId) return this.emit("blocked", ZERO_HASH, "MALFORMED", 0n, now, null);
     const amountProvided = o !== undefined && o !== null && typeof o === "object" && "amount" in o && o.amount !== undefined;
-    const known = amountProvided ? asAmount(o.amount) : undefined;
+    const known = amountProvided ? asAmount(o.amount) : null;
     const row0 = this.rows.get(planId);
     const hist = this.history.get(planId);
     const fallbackAmt = row0?.amount ?? hist?.amount ?? 0n;
     if (this.paused) {
-      const ev = this.emit("blocked", planId, "paused", known ?? fallbackAmt, now, planId);
-      throw new SentinelError("paused", "paused", ev);
+      return this.emit("blocked", planId, "paused", known ?? fallbackAmt, now, planId);
     }
     if (!amountProvided) {
-      const ev = this.emit("blocked", planId, "MissingAmount", fallbackAmt, now, planId);
-      throw new SentinelError("MissingAmount", "MissingAmount", ev);
+      return this.emit("blocked", planId, "MissingAmount", fallbackAmt, now, planId);
     }
-    if (known === undefined) {
-      const ev = this.emit("blocked", planId, "dati incompleti: amount", fallbackAmt, now, planId);
-      throw new SentinelError("dati incompleti: amount", "dati incompleti: amount", ev);
+    if (known == null) {
+      return this.emit("blocked", planId, "dati incompleti: amount", fallbackAmt, now, planId);
     }
     const amt = known;
     if (!row0) {
-      const reason = hist ? (hist.status === "consumed" ? "Consumed" : hist.status === "cancelled" ? "Cancelled" : hist.status === "expired" ? "Expired" : "Replay") : (this.seen.has(planId) ? "Replay" : "NotInQueue");
-      const ev = this.emit("blocked", planId, reason, amt, now, planId);
-      throw new SentinelError(reason, reason, ev);
+      const reason = hist ? (hist.status === "consumed" ? "Consumed" : hist.status === "cancelled" ? "Cancelled" : hist.status === "expired" ? "Expired" : "Replay") : (this.seen.has(planId) ? "Replay" : "Unknown");
+      return this.emit("blocked", planId, reason, amt, now, planId);
     }
     const row = this.live(row0, now);
     if (row.status === "consumed") {
-      const ev = this.emit("blocked", planId, "Consumed", amt, now, planId);
-      throw new SentinelError("Consumed", "Consumed", ev);
+      return this.emit("blocked", planId, "Consumed", amt, now, planId);
     }
     if (row.status === "cancelled") {
-      const ev = this.emit("blocked", planId, "Cancelled", amt, now, planId);
-      throw new SentinelError("Cancelled", "Cancelled", ev);
+      return this.emit("blocked", planId, "Cancelled", amt, now, planId);
     }
     if (row.status === "expired" || now > row.expiresAt) {
       this.remember({ ...row, status: "expired", decidedAt: now });
-      const ev = this.emit("expired", planId, "Expired", amt, now, planId);
-      throw new SentinelError("Expired", "Expired", ev);
+      return this.emit("expired", planId, "Expired", amt, now, planId);
     }
     if (now < row.earliest) {
-      const ev = this.emit("blocked", planId, "timelock_pending", amt, now, planId);
-      throw new SentinelError("timelock_pending", "timelock_pending", ev);
+      return this.emit("blocked", planId, "timelock_pending", amt, now, planId);
     }
     if (amt !== row.amount) {
-      const ev = this.emit("blocked", planId, "AmountMismatch", amt, now, planId);
-      throw new SentinelError("AmountMismatch", "AmountMismatch", ev);
+      return this.emit("blocked", planId, "AmountMismatch", amt, now, planId);
     }
     this.remember({ ...row, status: "consumed", decidedAt: now, amount: amt });
     return this.emit("consumed", planId, "Consumed", amt, now, planId);
   }
 
   pause(by: string): QueueEvent {
-    const now = this.now();
+    const clock = this.readNow();
+    if (!clock.ok) return clock.event;
+    const now = clock.now;
     const who = typeof by === "string" ? by.toLowerCase() : "";
     if (!this.isGuardian(who)) {
-      const ev = this.emit("blocked", ZERO_HASH, "Unauthorized", 0n, now, null);
-      throw new SentinelError("Unauthorized", "Unauthorized", ev);
+      return this.emit("blocked", ZERO_HASH, "Unauthorized", 0n, now, null);
     }
     this.paused = true;
     this.unpauseAt = null;
@@ -380,15 +400,15 @@ export class Sentinel {
 
   /** Owner/guardian requests unpause; it becomes effective only after `unpauseDelayMs`. */
   requestUnpause(by: string): QueueEvent {
-    const now = this.now();
+    const clock = this.readNow();
+    if (!clock.ok) return clock.event;
+    const now = clock.now;
     const who = typeof by === "string" ? by.toLowerCase() : "";
     if (!this.isGuardian(who)) {
-      const ev = this.emit("blocked", ZERO_HASH, "Unauthorized", 0n, now, null);
-      throw new SentinelError("Unauthorized", "Unauthorized", ev);
+      return this.emit("blocked", ZERO_HASH, "Unauthorized", 0n, now, null);
     }
     if (!this.paused) {
-      const ev = this.emit("blocked", ZERO_HASH, "NotPaused", 0n, now, null);
-      throw new SentinelError("NotPaused", "NotPaused", ev);
+      return this.emit("blocked", ZERO_HASH, "NotPaused", 0n, now, null);
     }
     this.unpauseAt = now + this.unpauseDelayMs;
     this.unpauseBy = who;
@@ -396,23 +416,21 @@ export class Sentinel {
   }
 
   finalizeUnpause(by: string): QueueEvent {
-    const now = this.now();
+    const clock = this.readNow();
+    if (!clock.ok) return clock.event;
+    const now = clock.now;
     const who = typeof by === "string" ? by.toLowerCase() : "";
     if (!this.isGuardian(who)) {
-      const ev = this.emit("blocked", ZERO_HASH, "Unauthorized", 0n, now, null);
-      throw new SentinelError("Unauthorized", "Unauthorized", ev);
+      return this.emit("blocked", ZERO_HASH, "Unauthorized", 0n, now, null);
     }
     if (!this.paused) {
-      const ev = this.emit("blocked", ZERO_HASH, "NotPaused", 0n, now, null);
-      throw new SentinelError("NotPaused", "NotPaused", ev);
+      return this.emit("blocked", ZERO_HASH, "NotPaused", 0n, now, null);
     }
     if (this.unpauseAt === null) {
-      const ev = this.emit("blocked", ZERO_HASH, "unpause_pending", 0n, now, null);
-      throw new SentinelError("unpause_pending", "unpause_pending", ev);
+      return this.emit("blocked", ZERO_HASH, "unpause_pending", 0n, now, null);
     }
     if (now < this.unpauseAt) {
-      const ev = this.emit("blocked", ZERO_HASH, "unpause_pending", 0n, now, null);
-      throw new SentinelError("unpause_pending", "unpause_pending", ev);
+      return this.emit("blocked", ZERO_HASH, "unpause_pending", 0n, now, null);
     }
     this.paused = false;
     this.unpauseAt = null;
