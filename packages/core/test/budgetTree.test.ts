@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { BudgetTree, BudgetTreeBlocked, type BudgetConfigEvent } from "../src/budgetTree";
-import type { QueueEvent } from "../src/approvalQueue";
+import type { QueueEvent } from "../src/events";
 
 const U = 1_000_000n; // 1 USDC
 const DAY = 86_400_000;

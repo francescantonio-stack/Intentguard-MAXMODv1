@@ -9,7 +9,7 @@
  * - Blocks and spends are reported as the shared QueueEvent; config changes go to `onConfig`.
  * Pure and in-memory: no network, no keys, no signing. Anything invalid is blocked (fail-closed).
  */
-import type { QueueEvent } from "./approvalQueue";
+import type { QueueEvent } from "./events";
 
 export type BudgetBlockReason =
   | "BadNow" | "BadAmount" | "BadPlanId" | "UnknownBudget" | "WrongToken" | "OverBudget"
