@@ -71,6 +71,8 @@ export type DecodedApproval = {
   approved?: boolean;
   unlimited: boolean;
   malformed: boolean;
+  /** Set when the calldata must block: MalformedApproval (truncated selector) or UnlimitedApprove. */
+  reason?: "MalformedApproval" | "UnlimitedApprove";
   args?: Record<string, unknown>;
 };
 
@@ -128,12 +130,13 @@ export function decodeApproval(data: unknown, unlimitedMin: bigint = maxUint256)
         approved: typeof args.approved === "boolean" ? args.approved : undefined,
         unlimited: isUnlimited(kind, resolvedStyle, args, unlimitedMin),
         malformed: false,
+        reason: isUnlimited(kind, resolvedStyle, args, unlimitedMin) ? "UnlimitedApprove" : undefined,
         args,
       };
     } catch { /* try next ABI */ }
   }
 
-  if (hinted) return { kind: hinted, method: hinted, unlimited: false, malformed: true };
+  if (hinted) return { kind: hinted, method: hinted, unlimited: false, malformed: true, reason: "MalformedApproval" };
   return empty();
 }
 
