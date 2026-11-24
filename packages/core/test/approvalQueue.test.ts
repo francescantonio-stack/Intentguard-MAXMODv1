@@ -17,7 +17,7 @@ const pay = (n: number, amount: bigint, token = "USDC") => ({ planId: h(n), toke
 describe("ApprovalQueue", () => {
   it("under the threshold: auto-approved, runs once", () => {
     const { q, events } = setup();
-    expect(q.submit(pay(1, 1n * USDC)).status).toBe("auto");
+    expect(q.submit(pay(1, 1n * USDC))!.status).toBe("auto");
     expect(q.canExecute(h(1))).toBe(true);
     q.consume(h(1), 1n * USDC);
     expect(q.canExecute(h(1))).toBe(false);
@@ -37,15 +37,15 @@ describe("ApprovalQueue", () => {
 
   it("exactly at the threshold is auto, above goes to the queue", () => {
     const { q } = setup();
-    expect(q.submit(pay(1, 2n * USDC)).status).toBe("auto");
-    const it2 = q.submit(pay(2, 2n * USDC + 1n));
+    expect(q.submit(pay(1, 2n * USDC))!.status).toBe("auto");
+    const it2 = q.submit(pay(2, 2n * USDC + 1n))!;
     expect(it2.status).toBe("pending");
     expect(q.canExecute(h(2))).toBe(false);
   });
 
   it("pending: blocked until approved, then runs once", () => {
     const { q, events } = setup();
-    const it1 = q.submit(pay(1, 5n * USDC));
+    const it1 = q.submit(pay(1, 5n * USDC))!;
     q.approve(it1.id, "max", h(1));
     expect(q.canExecute(h(1))).toBe(true);
     q.consume(h(1), 5n * USDC);
@@ -54,7 +54,7 @@ describe("ApprovalQueue", () => {
 
   it("approved decisions expire after the TTL", () => {
     const { q, tick, events } = setup();
-    const it1 = q.submit(pay(1, 5n * USDC));
+    const it1 = q.submit(pay(1, 5n * USDC))!;
     tick(30 * 60_000);
     q.approve(it1.id, "max", h(1));
     tick(31 * 60_000);
@@ -66,29 +66,29 @@ describe("ApprovalQueue", () => {
   it("auto decisions expire after the TTL and stop counting in the window", () => {
     const { q, tick } = setup();
     q.submit(pay(1, 2n * USDC));
-    expect(q.submit(pay(2, 1n)).status).toBe("pending");
+    expect(q.submit(pay(2, 1n))!.status).toBe("pending");
     tick(H + 1);
     expect(() => q.consume(h(1), 2n * USDC)).toThrow(/Expired/);
-    expect(q.submit(pay(3, 2n * USDC)).status).toBe("auto"); // unused auto released
+    expect(q.submit(pay(3, 2n * USDC))!.status).toBe("auto"); // unused auto released
   });
 
   it("anti-splitting: auto-approvals are summed over the window", () => {
     const { q, tick } = setup();
     q.submit(pay(1, 1n * USDC)); q.consume(h(1), 1n * USDC);
     q.submit(pay(2, 1n * USDC)); q.consume(h(2), 1n * USDC);
-    const third = q.submit(pay(3, 1n));
+    const third = q.submit(pay(3, 1n))!;
     expect(third.status).toBe("pending");
     expect(third.reason).toBe("WindowTotal");
     tick(DAY + 1);
-    expect(q.submit(pay(4, 1n * USDC)).status).toBe("auto");
+    expect(q.submit(pay(4, 1n * USDC))!.status).toBe("auto");
   });
 
   it("approved payments do not count against the auto window", () => {
     const { q } = setup();
-    const big = q.submit(pay(1, 10n * USDC));
+    const big = q.submit(pay(1, 10n * USDC))!;
     q.approve(big.id, "max", h(1));
     q.consume(h(1), 10n * USDC);
-    expect(q.submit(pay(2, 2n * USDC)).status).toBe("auto");
+    expect(q.submit(pay(2, 2n * USDC))!.status).toBe("auto");
   });
 
   it("consume with a different amount is blocked and logged with that amount", () => {
@@ -117,14 +117,14 @@ describe("ApprovalQueue", () => {
 
   it("approval is bound to the exact plan", () => {
     const { q } = setup();
-    const it1 = q.submit(pay(1, 5n * USDC));
+    const it1 = q.submit(pay(1, 5n * USDC))!;
     expect(() => q.approve(it1.id, "max", h(99))).toThrow(/planId mismatch/);
     expect(q.canExecute(h(1))).toBe(false);
   });
 
   it("expired pending cannot be approved or run", () => {
     const { q, tick } = setup({ ttlMs: 60_000 });
-    const it1 = q.submit(pay(1, 5n * USDC));
+    const it1 = q.submit(pay(1, 5n * USDC))!;
     tick(60_001);
     expect(() => q.approve(it1.id, "max", h(1))).toThrow(/status expired/);
     expect(q.pending()).toEqual([]);
@@ -132,7 +132,7 @@ describe("ApprovalQueue", () => {
 
   it("rejected stays blocked, no double decision", () => {
     const { q } = setup();
-    const it1 = q.submit(pay(1, 5n * USDC));
+    const it1 = q.submit(pay(1, 5n * USDC))!;
     q.reject(it1.id, "max", "unknown recipient");
     expect(() => q.consume(h(1), 5n * USDC)).toThrow(/Rejected/);
     expect(() => q.approve(it1.id, "max", h(1))).toThrow(/status rejected/);
@@ -140,25 +140,26 @@ describe("ApprovalQueue", () => {
 
   it("only listed approvers count, case-insensitive", () => {
     const { q } = setup({ approvers: ["Max"] });
-    const it1 = q.submit(pay(1, 5n * USDC));
+    const it1 = q.submit(pay(1, 5n * USDC))!;
     expect(() => q.approve(it1.id, "agent", h(1))).toThrow(/approver not allowed/);
     expect(q.approve(it1.id, "MAX", h(1)).decidedBy).toBe("max");
   });
 
   it("normalizes token to uppercase and planId to lowercase", () => {
-    const { q } = setup();
+    const { q, events } = setup();
     const upper = `0x${"AB".repeat(32)}` as `0x${string}`;
-    const it1 = q.submit({ ...pay(1, 1n, "usdc"), planId: upper });
-    expect(it1.status).toBe("auto");
-    expect(it1.token).toBe("USDC");
-    expect(it1.planId).toBe(upper.toLowerCase());
+    const it1 = q.submit({ ...pay(1, 1n, "usdc"), planId: upper })!;
+    expect(it1!.status).toBe("auto");
+    expect(it1!.token).toBe("USDC");
+    expect(it1!.planId).toBe(upper.toLowerCase());
     expect(q.canExecute(upper)).toBe(true);
-    expect(() => q.submit({ ...pay(2, 1n), planId: upper.toLowerCase() as `0x${string}` })).toThrow(/already submitted/);
+    expect(q.submit({ ...pay(2, 1n), planId: upper.toLowerCase() as `0x${string}` })).toBeNull();
+    expect(events.at(-1)).toMatchObject({ kind: "blocked", reason: "Replay", planId: upper.toLowerCase() });
   });
 
   it("unknown token: always needs a human (fail-closed)", () => {
     const { q } = setup();
-    expect(q.submit(pay(1, 1n, "WMON")).reason).toBe("NoThreshold");
+    expect(q.submit(pay(1, 1n, "WMON"))!.reason).toBe("NoThreshold");
   });
 
   it("prunes closed items after the window but still blocks replay", () => {
@@ -167,33 +168,40 @@ describe("ApprovalQueue", () => {
       q.submit(pay(i, 1n));
       q.consume(h(i), 1n);
     }
-    const r = q.submit(pay(100, 5n * USDC));
+    const r = q.submit(pay(100, 5n * USDC))!;
     q.reject(r.id, "max");
     expect(q.size()).toBe(51);
     tick(DAY + 1);
     q.submit(pay(200, 1n));
     expect(q.size()).toBe(1);
-    expect(() => q.submit(pay(7, 1n))).toThrow(/already submitted/);
+    expect(q.submit(pay(7, 1n))).toBeNull();
     expect(() => q.consume(h(7), 1n)).toThrow(/blocked: Consumed/);
     expect(() => q.consume(h(100), 5n * USDC)).toThrow(/blocked: Rejected/);
   });
 
-  it("rejects bad input and duplicate plans", () => {
-    const { q } = setup();
-    expect(() => q.submit(pay(1, 0n))).toThrow(/positive/);
-    expect(() => q.submit(pay(1, 1 as unknown as bigint))).toThrow(/positive/);
-    expect(() => q.submit({ ...pay(1, 1n), planId: "0x12" as `0x${string}` })).toThrow(/32 bytes/);
+  it("rejects bad input and duplicate plans (null + blocked, never throws)", () => {
+    const { q, events } = setup();
+    expect(q.submit(pay(1, 0n))).toBeNull();
+    expect(events.at(-1)!.reason).toBe("BadAmount");
+    expect(q.submit(pay(1, 1 as unknown as bigint))).toBeNull();
+    expect(events.at(-1)!.reason).toBe("BadAmount");
+    expect(q.submit({ ...pay(1, 1n), planId: "0x12" as `0x${string}` })).toBeNull();
+    expect(events.at(-1)!.reason).toBe("BadPlanId");
     q.submit(pay(1, 1n));
-    expect(() => q.submit(pay(1, 1n))).toThrow(/already submitted/);
-    expect(() => new ApprovalQueue({ thresholds: { USDC: -1n } })).toThrow(/non-negative/);
-    expect(() => new ApprovalQueue({ thresholds: {}, ttlMs: Number.NaN })).toThrow(/ttlMs/);
+    expect(q.submit(pay(1, 1n))).toBeNull();
+    expect(events.at(-1)!.reason).toBe("Replay");
+    for (const cfg of [{ thresholds: { USDC: -1n } }, { thresholds: {}, ttlMs: Number.NaN }] as ConstructorParameters<typeof ApprovalQueue>[0][]) {
+      const ev: QueueEvent[] = [];
+      expect(() => new ApprovalQueue({ ...cfg, onEvent: (e) => ev.push(e) })).not.toThrow();
+      expect(ev).toEqual([expect.objectContaining({ kind: "blocked", reason: "BadConfig" })]);
+    }
   });
 
   it("now() NaN, Infinity or throwing -> blocked BadNow, nothing written", () => {
     for (const bad of [() => Number.NaN, () => Infinity, () => { throw new Error("x"); }, () => "1" as unknown as number]) {
       const events: QueueEvent[] = [];
       const q = new ApprovalQueue({ thresholds: { USDC: 2n * USDC }, now: bad, onEvent: (e) => events.push(e) });
-      expect(() => q.submit(pay(1, 1n * USDC))).toThrow("BadNow");
+      expect(q.submit(pay(1, 1n * USDC))).toBeNull();
       expect(q.size()).toBe(0);
       expect(events).toEqual([expect.objectContaining({ kind: "blocked", reason: "BadNow", planId: h(1), amount: 1n * USDC })]);
       expect(q.canExecute(h(1))).toBe(false);
@@ -211,7 +219,8 @@ describe("ApprovalQueue", () => {
     expect(q.canExecute(h(1))).toBe(false);
     expect(events.at(-1)).toMatchObject({ kind: "blocked", reason: "BadNow" });
     expect(() => q.consume(h(1), 1n * USDC)).toThrow("BadNow");
-    expect(() => q.submit(pay(2, 1n * USDC))).toThrow("BadNow");
+    expect(q.submit(pay(2, 1n * USDC))).toBeNull();
+    expect(events.at(-1)).toMatchObject({ kind: "blocked", reason: "BadNow", planId: h(2) });
     expect(q.size()).toBe(1);
     t = 1_006_000; // clock is fine again: still expired
     expect(q.canExecute(h(1))).toBe(false);
@@ -234,5 +243,124 @@ describe("ApprovalQueue", () => {
     expect(events.at(-1)).toMatchObject({ kind: "blocked", planId: `0x${"0".repeat(64)}`, reason: "NotInQueue", amount: 1n });
     expect(() => q.consume(h(7).toUpperCase().replace("0X", "0x"), 1n)).toThrow("NotInQueue");
     expect(events.at(-1)!.planId).toBe(h(7));
+  });
+
+  it("invalid submit or replay -> exactly one blocked event, null, no throw, nothing written", () => {
+    const { q, events } = setup();
+    const cases: Array<[unknown, string]> = [
+      [null, "BadInput"], [{ ...pay(1, 1n), amount: undefined }, "BadAmount"], [{ ...pay(1, 1n), amount: 0n }, "BadAmount"], [{ ...pay(1, 1n), amount: 5 }, "BadAmount"],
+      [{ ...pay(1, 1n), planId: null }, "BadPlanId"], [{ ...pay(1, 1n), planId: "0x12" }, "BadPlanId"], [{ ...pay(1, 1n), token: null }, "BadToken"], [{ ...pay(1, 1n), token: " " }, "BadToken"],
+    ];
+    for (const [req, reason] of cases) {
+      const n = events.length;
+      expect(q.submit(req as never)).toBeNull();
+      expect(events.length).toBe(n + 1);
+      expect(events.at(-1)).toMatchObject({ kind: "blocked", reason, id: null });
+    }
+    expect(q.size()).toBe(0);
+    q.submit(pay(1, 1n * USDC));
+    expect(q.submit(pay(1, 1n * USDC))).toBeNull();
+    expect(events.at(-1)).toMatchObject({ kind: "blocked", reason: "Replay", planId: h(1), amount: 1n * USDC });
+    expect(q.size()).toBe(1);
+  });
+
+  it("windowMs / ttlMs null or invalid -> BadConfig event, constructor does not throw", () => {
+    for (const bad of [{ windowMs: null }, { ttlMs: null }, { ttlMs: 0 }, { windowMs: Number.NaN }, { windowMs: -1 }, { ttlMs: Infinity }]) {
+      const ev: QueueEvent[] = [];
+      expect(() => new ApprovalQueue({ thresholds: { USDC: 1n }, onEvent: (e) => ev.push(e), ...(bad as object) })).not.toThrow();
+      expect(ev).toEqual([expect.objectContaining({ kind: "blocked", reason: "BadConfig", planId: `0x${"0".repeat(64)}`, id: null })]);
+    }
+  });
+
+  it("caps: ttlMs up to 24h, windowMs up to 7 days; above -> BadConfig", () => {
+    const mk = (extra: object) => {
+      const ev: QueueEvent[] = [];
+      const q = new ApprovalQueue({ thresholds: { USDC: 2n * USDC }, now: () => 1_000, onEvent: (e) => ev.push(e), ...extra });
+      return { q, ev };
+    };
+    const ok1 = mk({ ttlMs: 86_400_000 });
+    expect(ok1.ev).toEqual([]);
+    expect(ok1.q.submit(pay(1, 1n))!.status).toBe("auto");
+    const ok2 = mk({ windowMs: 604_800_000 });
+    expect(ok2.ev).toEqual([]);
+    expect(ok2.q.submit(pay(1, 1n))!.status).toBe("auto");
+    for (const bad of [{ ttlMs: 86_400_001 }, { windowMs: 604_800_001 }, { ttlMs: null }, { windowMs: null }]) {
+      const { q, ev } = mk(bad);
+      expect(ev).toEqual([expect.objectContaining({ kind: "blocked", reason: "BadConfig" })]);
+      expect(q.submit(pay(1, 1n))).toBeNull();
+    }
+  });
+
+  it("other bad config -> BadConfig (thresholds, approvers, now, onEvent, cfg)", () => {
+    const bads: unknown[] = [
+      { thresholds: { USDC: 1 } }, { thresholds: null }, { thresholds: [1n] }, { thresholds: {}, approvers: "max" },
+      { thresholds: {}, approvers: ["max", 1] }, { thresholds: {}, now: 5 },
+    ];
+    for (const b of bads) {
+      const ev: QueueEvent[] = [];
+      expect(() => new ApprovalQueue({ ...(b as object), onEvent: (e: QueueEvent) => ev.push(e) } as never)).not.toThrow();
+      expect(ev.map((e) => e.reason)).toEqual(["BadConfig"]);
+    }
+    // cfg not an object / onEvent not a function: no throw, dead queue (no listener to tell)
+    for (const b of [null, 42, { thresholds: {}, onEvent: "log" }]) {
+      const q = new ApprovalQueue(b as never);
+      expect(q.submit(pay(1, 1n))).toBeNull();
+      expect(q.canExecute(h(1))).toBe(false);
+      expect(q.size()).toBe(0);
+    }
+  });
+
+  it("dead queue (bad config) never authorises anything, every call blocks BadConfig", () => {
+    const ev: QueueEvent[] = [];
+    const q = new ApprovalQueue({ thresholds: { USDC: 2n * USDC }, ttlMs: 86_400_001, now: () => 1_000, onEvent: (e) => ev.push(e) });
+    expect(ev.length).toBe(1);
+    expect(q.submit(pay(1, 1n))).toBeNull();
+    expect(ev.at(-1)).toMatchObject({ kind: "blocked", reason: "BadConfig", planId: h(1), amount: 1n });
+    expect(q.canExecute(h(1))).toBe(false);
+    expect(ev.at(-1)).toMatchObject({ reason: "BadConfig", planId: h(1) });
+    expect(() => q.consume(h(1), 1n)).toThrow("blocked: BadConfig");
+    expect(() => q.approve("q1", "max", h(1))).toThrow("blocked: BadConfig");
+    expect(() => q.reject("q1", "max")).toThrow("blocked: BadConfig");
+    expect(() => q.pending()).toThrow("blocked: BadConfig");
+    expect(() => q.autoSpent("USDC")).toThrow("blocked: BadConfig");
+    expect(ev.length).toBe(8);
+    expect(ev.every((e) => e.kind === "blocked" && e.reason === "BadConfig")).toBe(true);
+    expect(q.size()).toBe(0);
+  });
+
+  it("submit never throws on hostile input (throwing getter)", () => {
+    const { q, events } = setup();
+    const evil = Object.defineProperty({}, "amount", { get() { throw new Error("boom"); }, enumerable: true });
+    expect(q.submit(evil as never)).toBeNull();
+    expect(events.at(-1)).toMatchObject({ kind: "blocked", reason: "BadInput" });
+  });
+
+  it("tokens are trimmed everywhere: ' usdc ' = USDC in thresholds and submit; blank = BadToken", () => {
+    const ev: QueueEvent[] = [];
+    const q = new ApprovalQueue({ thresholds: { " usdc ": 2n * USDC }, now: () => 1_000, onEvent: (e) => ev.push(e) });
+    const a = q.submit(pay(1, 1n * USDC, " usdc "))!;
+    expect(a.status).toBe("auto");
+    expect(a.token).toBe("USDC");
+    expect(q.submit(pay(2, 1n * USDC, "USDC"))!.status).toBe("auto"); // same window total
+    expect(q.submit(pay(3, 1n, "\tUsdc "))!.reason).toBe("WindowTotal");
+    expect(q.autoSpent(" usdc ")).toBe(2n * USDC);
+    expect(q.submit(pay(4, 1n, " \t "))).toBeNull();
+    expect(ev.at(-1)).toMatchObject({ kind: "blocked", reason: "BadToken", planId: h(4) });
+    const ev2: QueueEvent[] = [];
+    const dead = new ApprovalQueue({ thresholds: { "  ": 1n }, onEvent: (e) => ev2.push(e) });
+    expect(ev2.map((e) => e.reason)).toEqual(["BadToken"]);
+    expect(dead.submit(pay(1, 1n))).toBeNull();
+    expect(dead.canExecute(h(1))).toBe(false);
+  });
+
+  it("reviewer cases: ttl 25h and window 8 days -> BadConfig event, no throw, dead queue", () => {
+    for (const bad of [{ ttlMs: 25 * H }, { windowMs: 8 * DAY }]) {
+      const ev: QueueEvent[] = [];
+      const q = new ApprovalQueue({ thresholds: { USDC: 2n * USDC }, now: () => 1_000, onEvent: (e) => ev.push(e), ...bad });
+      expect(ev).toEqual([expect.objectContaining({ kind: "blocked", reason: "BadConfig" })]);
+      expect(q.submit(pay(1, 1n))).toBeNull();
+      expect(q.canExecute(h(1))).toBe(false);
+      expect(ev.map((e) => e.reason)).toEqual(["BadConfig", "BadConfig", "BadConfig"]);
+    }
   });
 });
