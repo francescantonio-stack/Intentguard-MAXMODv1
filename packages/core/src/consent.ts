@@ -57,7 +57,7 @@ export function canonicalJson(v: unknown): string {
   return `{${Object.keys(o).filter((k) => o[k] !== undefined).sort().map((k) => `${JSON.stringify(k)}:${canonicalJson(o[k])}`).join(",")}}`;
 }
 
-// ---------- decoding ----------
+// ---------- decoding (isolated: swap this block for import from ./approvals when QC pushes it) ----------
 
 /** Valid calldata: 0x plus an even number of hex digits (including empty "0x"). */
 export const HEX_DATA_RE = /^0x(?:[0-9a-fA-F]{2})*$/;
@@ -114,29 +114,35 @@ function decodeEvm(data?: Hex): Decoded {
   return null;
 }
 
-/** Calldata looks like approve/permit/setApprovalForAll but cannot be fully decoded (truncated or malformed). */
-export function isTruncatedSensitive(data: unknown): { method: string } | undefined {
-  if (typeof data !== "string" || !isValidHexData(data) || data === "0x") return undefined;
+/**
+ * True when calldata starts with an approve / increaseAllowance / permit / setApprovalForAll
+ * selector but cannot be fully decoded (truncated, invalid hex after the selector, or wrong ABI shape).
+ * A truly unknown selector is not a malformed approval.
+ */
+export function isMalformedApproval(data: unknown): { method: string } | undefined {
+  if (typeof data !== "string") return undefined;
   const sel = evmSelector(data);
   const method = sel ? SENSITIVE_SELECTORS[sel] : undefined;
   if (!method) return undefined;
+  if (!isValidHexData(data) || data === "0x") return { method };
   if (decodeEvm(data as Hex)) return undefined;
   return { method };
 }
 
-export function evmPayloadIssue(p: unknown): "MALFORMED: data" | "MALFORMED: value" | undefined {
+export function evmPayloadIssue(p: unknown): "MALFORMED: data" | "MALFORMED: value" | "MalformedApproval" | undefined {
   if (!p || typeof p !== "object") return undefined;
   const tx = p as TxPayload;
   if (tx.kind !== "evm") return undefined;
   if (asAmount((tx as { value?: unknown }).value) === undefined) return "MALFORMED: value";
   const data = (tx as { data?: unknown }).data;
+  if (isMalformedApproval(data)) return "MalformedApproval";
   if (data !== undefined && data !== null && data !== "") {
     if (!isValidHexData(data)) return "MALFORMED: data";
   }
   return undefined;
 }
 
-const TRUNCATED_WARNING = "ATTENZIONE: i dati sembrano un'autorizzazione (approve, permit o setApprovalForAll) incompleta o malformata. Non fidarti: controlla il testo esatto.";
+const MALFORMED_APPROVAL_TEXT = "Autorizzazione incompleta o malformata (approve, permit o setApprovalForAll): il piano è bloccato.";
 const BAD_DATA_WARNING = "ATTENZIONE: i dati della transazione non sono hex 0x valido. Non fidarti: controlla il testo esatto.";
 const BAD_VALUE_WARNING = "ATTENZIONE: il valore nativo della transazione non è un numero valido. Non fidarti: controlla il testo esatto.";
 
@@ -186,7 +192,7 @@ export function exactText(p: TxPayload): string[] {
     lines.push(`Dati grezzi: ${p.data ?? "0x"}`);
   } else {
     const d = decodeEvm(p.data);
-    const trunc = isTruncatedSensitive(p.data);
+    const trunc = isMalformedApproval(p.data);
     if (d) {
       lines.push(`Metodo: ${d.method}`);
       for (const [k, v] of Object.entries(d.args)) {
@@ -195,7 +201,7 @@ export function exactText(p: TxPayload): string[] {
       }
     } else if (trunc) {
       lines.push(`Metodo: ${trunc.method} (incompleto o malformato)`);
-      lines.push(TRUNCATED_WARNING);
+      lines.push(MALFORMED_APPROVAL_TEXT);
     } else if (p.data && p.data !== "0x") lines.push("Metodo: non decodificato");
     lines.push(`Dati grezzi: ${p.data ?? "0x"}`);
   }
@@ -249,9 +255,9 @@ export function plainExplanation(p: TxPayload): PlainExplanation[] {
   try { tok = evmTokens()[getAddress(p.to)]; } catch { /* invalid to */ }
   const native = evmNative(p.chainId);
   const valueOk = asAmount((p as { value?: unknown }).value) ?? 0n;
-  const trunc = isTruncatedSensitive(p.data);
+  const trunc = isMalformedApproval(p.data);
   if (trunc)
-    return [{ text: UNKNOWN, risk: "unknown" }, { text: TRUNCATED_WARNING, risk: "high" }];
+    return [{ text: MALFORMED_APPROVAL_TEXT, risk: "high" }];
   const d = decodeEvm(p.data);
   if (!p.data || p.data === "0x")
     return [{ text: `Stai inviando ${formatUnitsIt(valueOk, 18)} ${native} a ${p.to} su ${p.network}.`, risk: "normal" }];
@@ -406,6 +412,7 @@ export type ConsentReason =
   | "BAD_NOW"
   | "BAD_CONFIG"
   | "MALFORMED"
+  | "MalformedApproval"
   | "MissingAmount"
   | "AmountMismatch"
   | "Expired"
@@ -660,6 +667,7 @@ export function verifyConsent(
     }
     if (!isPayload(current)) return fail("blocked", "ConsentMalformed", ZERO_HASH, knownAmount ?? 0n);
     const fieldIssue = evmPayloadIssue(current);
+    if (fieldIssue === "MalformedApproval") return fail("blocked", "MalformedApproval", planIdOf(current), knownAmount ?? payloadAmount(current));
     if (fieldIssue) return fail("blocked", "MALFORMED", planIdOf(current), knownAmount ?? 0n);
     const view = approvalView(current);
     const planId = lowerPlanId(view.payloadHash);
@@ -718,6 +726,10 @@ export function consumeConsent(
   };
   if (now === undefined) return emitThrow("blocked", "BAD_NOW", planIdOf(current), knownAmount ?? payloadAmount(current));
   if (store && !store.acceptNow(now)) return emitThrow("blocked", "BAD_NOW", planIdOf(current), knownAmount ?? payloadAmount(current));
+  const approvalIssue = evmPayloadIssue(current);
+  if (approvalIssue === "MalformedApproval") {
+    return emitThrow("blocked", "MalformedApproval", planIdOf(current), knownAmount ?? payloadAmount(current));
+  }
   if (!store) return emitThrow("blocked", "ConsentMalformed", planIdOf(current), knownAmount ?? payloadAmount(current));
   store.prune(now);
   const c = consent as Consent | null | undefined;

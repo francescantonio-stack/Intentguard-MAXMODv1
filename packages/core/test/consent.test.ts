@@ -638,7 +638,7 @@ describe("PlainSign: increaseAllowance, permit, setApprovalForAll, calldata malf
     expect(plainExplanation(evm(setApprovalData(false)))[0]!.risk).toBe("normal");
   });
 
-  it("calldata tronco o malformato con selettore approve/permit/setApprovalForAll: fallback unknown + avviso, mai una frase rassicurante", () => {
+  it("calldata tronco o malformato con selettore approve/permit/setApprovalForAll: il consenso è bloccato (MalformedApproval), niente fallback unknown + avviso", () => {
     const sels = [
       "0x095ea7b3", // approve
       "0x39509351", // increaseAllowance
@@ -648,17 +648,57 @@ describe("PlainSign: increaseAllowance, permit, setApprovalForAll, calldata malf
     ];
     for (const sel of sels) {
       const truncated = (sel + "00") as Hex; // too short to decode
-      const p = plainExplanation(evm(truncated));
-      expect(p.length).toBeGreaterThanOrEqual(2);
-      expect(p[0]!.text).toBe("Azione non riconosciuta: controlla il testo esatto.");
-      expect(p[0]!.risk).toBe("unknown");
-      expect(p[1]!.risk).toBe("high");
-      expect(p[1]!.text).toMatch(/ATTENZIONE:.*incompleta o malformata/i);
+      const payload = evm(truncated);
+      const p = plainExplanation(payload);
+      expect(p, sel).toHaveLength(1);
+      expect(p[0]!.risk, sel).toBe("high");
+      expect(p[0]!.text, sel).toMatch(/il piano è bloccato/i);
+      expect(p[0]!.text, sel).not.toBe("Azione non riconosciuta: controlla il testo esatto.");
       const all = p.map((x) => x.text).join(" ");
-      expect(all).not.toMatch(/Stai autorizzando|Stai inviando|Stai chiamando|Stai firmando|Stai aumentando|Stai dando/);
-      expect(() => exactText(evm(truncated))).not.toThrow();
-      expect(() => approvalView(evm(truncated))).not.toThrow();
+      expect(all, sel).not.toMatch(/Stai autorizzando|Stai inviando|Stai chiamando|Stai firmando|Stai aumentando|Stai dando|Azione non riconosciuta/);
+      expect(() => exactText(payload)).not.toThrow();
+      expect(() => approvalView(payload)).not.toThrow();
+      const store = storeOf();
+      const r = verifyConsent(null, payload, { store, now: NOW, log });
+      expect(r.ok, sel).toBe(false);
+      if (!r.ok) {
+        expect(r.reason, sel).toBe("MalformedApproval");
+        expect(r.record.kind, sel).toBe("blocked");
+        expect(r.record.reason, sel).toBe("MalformedApproval");
+      }
     }
+    // a truly unknown selector still uses the generic fallback and is not MalformedApproval
+    const unknown = evm("0xdeadbeef");
+    const u = plainExplanation(unknown);
+    expect(u).toHaveLength(1);
+    expect(u[0]!.text).toBe("Azione non riconosciuta: controlla il testo esatto.");
+    expect(u[0]!.risk).toBe("unknown");
+    const ur = verifyConsent(null, unknown, { store: storeOf(), now: NOW });
+    expect(ur.ok).toBe(false);
+    if (!ur.ok) expect(ur.reason).not.toBe("MalformedApproval");
+  });
+
+  it("consume di un piano con approve/permit tronco si blocca con MalformedApproval e non cambia lo stato", () => {
+    const pOk = evm(approveData(SPENDER, 2_000_000n));
+    const { consent, store, now, view } = fresh(pOk);
+    expect(consentPassed(verifyConsent(consent, pOk, { store, now: now + 1 }))).toBe(true);
+    const truncated = evm(("0x095ea7b3" + "00") as Hex);
+    logged.length = 0;
+    try {
+      consumeConsent(consent, truncated, { store, now: now + 2, amount: 2_000_000n, log });
+      throw new Error("expected throw");
+    } catch (e) {
+      expect(e).toBeInstanceOf(ConsentError);
+      const err = e as ConsentError;
+      expect(err.code).toBe("MalformedApproval");
+      expect(err.event.kind).toBe("blocked");
+      expect(err.event.reason).toBe("MalformedApproval");
+    }
+    expect(store.get(consent.nonce)?.status).toBe("consented");
+    // still consumable with the original, well-formed payload
+    const ev = consumeConsent(consent, pOk, { store, now: now + 3, amount: 2_000_000n });
+    expect(ev.kind).toBe("consumed");
+    expect(view.payloadHash).toBe(consent.payloadHash);
   });
 
   it("calldata che non è hex 0x valido viene rifiutata, senza crash", () => {
