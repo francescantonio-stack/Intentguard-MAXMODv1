@@ -235,4 +235,27 @@ describe("ApprovalQueue", () => {
     expect(() => q.consume(h(7).toUpperCase().replace("0X", "0x"), 1n)).toThrow("NotInQueue");
     expect(events.at(-1)!.planId).toBe(h(7));
   });
+
+  it("invalid submit or replay -> blocked event (log keeps it), then throw, nothing written", () => {
+    const { q, events } = setup();
+    const cases: Array<[unknown, string]> = [
+      [null, "BadInput"], [{ ...pay(1, 1n), amount: undefined }, "BadAmount"], [{ ...pay(1, 1n), amount: 0n }, "BadAmount"], [{ ...pay(1, 1n), amount: 5 }, "BadAmount"],
+      [{ ...pay(1, 1n), planId: null }, "BadPlanId"], [{ ...pay(1, 1n), planId: "0x12" }, "BadPlanId"], [{ ...pay(1, 1n), token: null }, "BadToken"], [{ ...pay(1, 1n), token: " " }, "BadToken"],
+    ];
+    for (const [req, reason] of cases) {
+      expect(() => q.submit(req as never)).toThrow(reason);
+      expect(events.at(-1)).toMatchObject({ kind: "blocked", reason, id: null });
+    }
+    expect(q.size()).toBe(0);
+    q.submit(pay(1, 1n * USDC));
+    expect(() => q.submit(pay(1, 1n * USDC))).toThrow("Replay");
+    expect(events.at(-1)).toMatchObject({ kind: "blocked", reason: "Replay", planId: h(1), amount: 1n * USDC });
+    expect(q.size()).toBe(1);
+  });
+
+  it("windowMs / ttlMs null or invalid -> constructor error (only undefined takes the default)", () => {
+    for (const bad of [{ windowMs: null }, { ttlMs: null }, { ttlMs: 0 }, { windowMs: Number.NaN }]) {
+      expect(() => new ApprovalQueue({ thresholds: { USDC: 1n }, ...(bad as object) })).toThrow();
+    }
+  });
 });

@@ -13,7 +13,7 @@ import type { QueueEvent } from "./events";
 export type QueueStatus = "auto" | "pending" | "approved" | "rejected" | "expired" | "consumed";
 
 /** Queue block reasons, aligned with ActionBlocked(planId, reason, amount). Local to the queue; shared vocabulary lives in events.ts. */
-export type QueueBlockReason = "NotInQueue" | "Pending" | "Consumed" | "Expired" | "Rejected" | "AmountMismatch" | "MissingAmount" | "BadNow";
+export type QueueBlockReason = "NotInQueue" | "Pending" | "Consumed" | "Expired" | "Rejected" | "AmountMismatch" | "MissingAmount" | "BadNow" | "BadInput" | "BadAmount" | "BadPlanId" | "BadToken" | "Replay";
 
 
 export interface PaymentRequest {
@@ -77,8 +77,9 @@ export class ApprovalQueue {
   private lastNow = -Infinity;
 
   constructor(cfg: ApprovalQueueConfig) {
-    this.windowMs = cfg.windowMs ?? 86_400_000;
-    this.ttlMs = cfg.ttlMs ?? 3_600_000;
+    // only `undefined` takes the default: null or junk is a config error
+    this.windowMs = cfg.windowMs === undefined ? 86_400_000 : cfg.windowMs;
+    this.ttlMs = cfg.ttlMs === undefined ? 3_600_000 : cfg.ttlMs;
     if (!(Number.isFinite(this.windowMs) && this.windowMs > 0)) throw new Error("windowMs must be > 0");
     if (!(Number.isFinite(this.ttlMs) && this.ttlMs > 0)) throw new Error("ttlMs must be > 0");
     this.thresholds = new Map();
@@ -151,14 +152,21 @@ export class ApprovalQueue {
   }
 
   submit(req: PaymentRequest): QueueItem {
-    if (typeof req.amount !== "bigint" || req.amount <= 0n) throw new Error("amount must be a positive bigint");
-    const planId = String(req.planId ?? "").toLowerCase();
-    if (!PLAN_RE.test(planId)) throw new Error("planId must be 32 bytes hex");
-    const token = String(req.token ?? "").toUpperCase();
-    if (!token) throw new Error("token required");
+    const r = (typeof req === "object" && req !== null ? req : {}) as Partial<PaymentRequest>;
+    // invalid input: one `blocked` event (so the log keeps it), then throw; nothing written
+    const bad = (reason: QueueBlockReason, detail: string): never => {
+      this.emit("blocked", r.planId, r.amount, null, reason);
+      throw new Error(`blocked: ${reason}: ${detail}`);
+    };
+    if (typeof req !== "object" || req === null) return bad("BadInput", "request is not an object");
+    if (typeof r.amount !== "bigint" || r.amount <= 0n) return bad("BadAmount", "amount must be a positive bigint");
+    const planId = typeof r.planId === "string" ? r.planId.trim().toLowerCase() : "";
+    if (!PLAN_RE.test(planId)) return bad("BadPlanId", "planId must be 32 bytes hex");
+    const token = typeof r.token === "string" ? r.token.trim().toUpperCase() : "";
+    if (!token) return bad("BadToken", "token required");
     this.tickOrBlock(planId, req.amount, null); // before ANY write
     this.prune();
-    if (this.byPlan.has(planId) || this.seen.has(planId)) throw new Error("plan already submitted");
+    if (this.byPlan.has(planId) || this.seen.has(planId)) return bad("Replay", "plan already submitted");
     const threshold = this.thresholds.get(token);
     const now = this.t;
     const id = `q${++this.seq}`;
