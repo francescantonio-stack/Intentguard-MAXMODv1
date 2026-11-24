@@ -14,8 +14,6 @@ import {
   payloadAmount,
   payloadFromStep,
   plainExplanation,
-  asAmount,
-  asFiniteNumber,
   consentPassed,
   consumeConsent,
   ConsentError,
@@ -60,10 +58,16 @@ const setApprovalData = (approved: boolean) => encodeFunctionData({ abi: setAppr
 const logged: unknown[] = [];
 const log = (r: unknown) => void logged.push(r);
 const storeOf = () => new ConsentStore();
+const mustIssue = (view: ReturnType<typeof approvalView>, o: Parameters<typeof issueConsent>[1] = {}) => {
+  const r = issueConsent(view, o);
+  if (!r.ok) throw new Error("issueConsent failed: " + r.reason);
+  return r.consent;
+};
 const fresh = (p: TxPayload, store = storeOf(), now = NOW) => {
   const view = approvalView(p);
-  const consent = issueConsent(view, { now, nonce: "0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa" });
-  return { view, consent, store, now };
+  const amount = payloadAmount(p);
+  const consent = mustIssue(view, { now, nonce: "0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa", store, amount });
+  return { view, consent, store, now, amount };
 };
 
 describe("formatUnitsIt", () => {
@@ -152,7 +156,7 @@ describe("consenso fresco, legato al payload", () => {
     const { view, consent, store, now } = fresh(p);
     expect(view.payloadHash).toBe(consent.payloadHash);
     expect(consent.expiresAt - consent.issuedAt).toBe(CONSENT_TTL_MS);
-    const r = verifyConsent(consent, p, { store, now: now + 1_000, log });
+    const r = verifyConsent(consent, p, { amount: payloadAmount(p), store, now: now + 1_000, log });
     expect(consentPassed(r)).toBe(true);
     if (!r.ok) return;
     expect(r.event.kind).toBe("approved");
@@ -168,7 +172,7 @@ describe("consenso fresco, legato al payload", () => {
     logged.length = 0;
     const p = near([{ type: "Transfer", deposit: 10n }]);
     const { consent, store, now } = fresh(p);
-    const r = verifyConsent(consent, p, { store, now: now + CONSENT_TTL_MS + 1, log });
+    const r = verifyConsent(consent, p, { amount: payloadAmount(p), store, now: now + CONSENT_TTL_MS + 1, log });
     expect(r.ok).toBe(false);
     if (r.ok) return;
     expect(r.reason).toBe("ConsentExpired");
@@ -188,7 +192,7 @@ describe("consenso fresco, legato al payload", () => {
     const p = near([{ type: "Transfer", deposit: 10n }]);
     const { consent, store, now } = fresh(p);
     const changed = near([{ type: "Transfer", deposit: 11n }]);
-    const r = verifyConsent(consent, changed, { store, now: now + 1, log });
+    const r = verifyConsent(consent, changed, { amount: payloadAmount(changed), store, now: now + 1, log });
     expect(r.ok).toBe(false);
     if (r.ok) return;
     expect(r.reason).toBe("ConsentPayloadMismatch");
@@ -202,9 +206,9 @@ describe("consenso fresco, legato al payload", () => {
     logged.length = 0;
     const p = near([{ type: "Transfer", deposit: 10n }]);
     const { consent, store, now } = fresh(p);
-    expect(verifyConsent(consent, p, { store, now: now + 1, log }).ok).toBe(true);
+    expect(verifyConsent(consent, p, { amount: payloadAmount(p), store, now: now + 1, log }).ok).toBe(true);
     logged.length = 0;
-    const r = verifyConsent(consent, p, { store, now: now + 2, log });
+    const r = verifyConsent(consent, p, { amount: payloadAmount(p), store, now: now + 2, log });
     expect(r.ok).toBe(false);
     if (r.ok) return;
     expect(r.reason).toBe("ConsentReplay");
@@ -223,7 +227,7 @@ describe("consenso fresco, legato al payload", () => {
     expect(rec.amount).toBe(42n);
     expect(rec.planId).toBe(approvalView(p).payloadHash.toLowerCase());
     expect(logged).toEqual([rec]);
-    const r = verifyConsent(consent, p, { store, now: now + 1, log });
+    const r = verifyConsent(consent, p, { amount: payloadAmount(p), store, now: now + 1, log });
     expect(r.ok).toBe(false);
     if (r.ok) return;
     expect(r.reason).toBe("ConsentReplay");
@@ -251,7 +255,7 @@ describe("fail-closed (edge cases)", () => {
     logged.length = 0;
     const p = near([{ type: "Transfer", deposit: 10n }]);
     const { consent, store } = fresh(p);
-    const r = verifyConsent(consent, p, { store, now: NaN, log });
+    const r = verifyConsent(consent, p, { amount: payloadAmount(p), store, now: NaN, log });
     expect(consentPassed(r)).toBe(false);
     expect(r.ok).toBe(false);
     if (r.ok) return;
@@ -261,21 +265,19 @@ describe("fail-closed (edge cases)", () => {
     expect(logged).toHaveLength(1);
   });
 
-  it("expiresAt come stringa (tipo sbagliato) blocca, non passa", () => {
+  it("expiresAt come stringa sul token del chiamante è ignorata: vale solo la scadenza dello store", () => {
     logged.length = 0;
     const p = near([{ type: "Transfer", deposit: 10n }]);
     const { consent, store, now } = fresh(p);
     const bad = { ...consent, expiresAt: String(consent.expiresAt) };
-    const r = verifyConsent(bad, p, { store, now: now + 1, log });
-    expect(consentPassed(r)).toBe(false);
-    if (r.ok) return;
-    expect(r.reason).toBe("ConsentMalformed");
+    const r = verifyConsent(bad, p, { amount: payloadAmount(p), store, now: now + 1, log });
+    expect(consentPassed(r)).toBe(true);
   });
 
   it("payload null non va in crash e blocca", () => {
     logged.length = 0;
     const store = storeOf();
-    const r = verifyConsent({ payloadHash: "0x" + "ab".repeat(32), nonce: "0xaa", issuedAt: NOW, expiresAt: NOW + 1000 }, null, { store, now: NOW, log });
+    const r = verifyConsent({ payloadHash: "0x" + "ab".repeat(32), nonce: "0xaa", issuedAt: NOW, expiresAt: NOW + 1000 }, null, { amount: payloadAmount(null), store, now: NOW, log });
     expect(consentPassed(r)).toBe(false);
     if (r.ok) return;
     expect(r.reason).toBe("ConsentMalformed");
@@ -283,14 +285,11 @@ describe("fail-closed (edge cases)", () => {
   });
 
   it("importo bigint 0n è accettato come 0", () => {
-    expect(asAmount(0n)).toBe(0n);
-    expect(asAmount(0)).toBe(0n);
-    expect(asAmount("0")).toBeUndefined();
     expect(payloadAmount(near([{ type: "Transfer", deposit: 0n }]))).toBe(0n);
     expect(payloadAmount(near([{ type: "Transfer", deposit: 0 as unknown as bigint }]))).toBe(0n);
     const p = near([{ type: "Transfer", deposit: 0n }]);
     const { consent, store, now } = fresh(p);
-    expect(consentPassed(verifyConsent(consent, p, { store, now: now + 1 }))).toBe(true);
+    expect(consentPassed(verifyConsent(consent, p, { amount: payloadAmount(p), store, now: now + 1 }))).toBe(true);
   });
 
   it("{ok:0} non conta come consenso valido", () => {
@@ -305,9 +304,9 @@ describe("fail-closed (edge cases)", () => {
     logged.length = 0;
     const p = near([{ type: "Transfer", deposit: 10n }]);
     const { consent, store, now } = fresh(p);
-    expect(consentPassed(verifyConsent(consent, p, { store, now: now + 1, log }))).toBe(true);
+    expect(consentPassed(verifyConsent(consent, p, { amount: payloadAmount(p), store, now: now + 1, log }))).toBe(true);
     const tweaked = near([{ type: "Transfer", deposit: 99n }]);
-    const r = verifyConsent(consent, tweaked, { store, now: now + 2, log });
+    const r = verifyConsent(consent, tweaked, { amount: payloadAmount(tweaked), store, now: now + 2, log });
     expect(consentPassed(r)).toBe(false);
     if (r.ok) return;
     expect(r.reason).toBe("ConsentReplay");
@@ -318,12 +317,10 @@ describe("fail-closed (edge cases)", () => {
   it("now Infinity, now '0.1', consenso assente e store assente bloccano senza crash", () => {
     const p = near([{ type: "Transfer", deposit: 1n }]);
     const { consent, store, now } = fresh(p);
-    expect(verifyConsent(consent, p, { store, now: Infinity }).ok).toBe(false);
-    expect(verifyConsent(consent, p, { store, now: "0.1" }).ok).toBe(false);
-    expect(asFiniteNumber("0.1")).toBeUndefined();
-    expect(asFiniteNumber(now)).toBe(now);
-    expect(verifyConsent(undefined, p, { store, now }).ok).toBe(false);
-    expect(verifyConsent(consent, p, { now }).ok).toBe(false);
+    expect(verifyConsent(consent, p, { amount: payloadAmount(p), store, now: Infinity }).ok).toBe(false);
+    expect(verifyConsent(consent, p, { amount: payloadAmount(p), store, now: "0.1" }).ok).toBe(false);
+    expect(verifyConsent(undefined, p, { amount: payloadAmount(p), store, now }).ok).toBe(false);
+    expect(verifyConsent(consent, p, { amount: payloadAmount(p), now }).ok).toBe(false);
     expect(() => verifyConsent(null, undefined, undefined)).not.toThrow();
     expect(consentPassed(verifyConsent(null, undefined, undefined))).toBe(false);
   });
@@ -340,7 +337,7 @@ describe("fail-closed (edge cases)", () => {
 
 describe("redazione nei log, non nel testo di approvazione", () => {
   it("non oscura campi onesti (tokenIn, tokenAddress, signatureCount) e non altera il testo esatto", () => {
-    const clean = { tokenIn: "USDC", tokenOut: "MON", tokenAddress: MONAD_TESTNET.usdc, tokenSymbol: "USDC", signatureCount: 2, seededAt: NOW, passed: true };
+    const clean = { tokenIn: "USDC", tokenOut: "MON", tokenAddress: MONAD_TESTNET.usdc, tokenSymbol: "USDC", signatureCount: 2, issuedAt: NOW, passed: true, keyId: "req-7", publicKey: "ed25519:visible-public" };
     expect(redactSecrets(clean)).toEqual(clean);
     const p = near([{ type: "FunctionCall", method: "ft_transfer", args: { receiver_id: BOB, amount: "1500000", tokenIn: "USDT" }, deposit: 1n, gas: 1n }], { receiver: USDT });
     const text = exactText(p).join("\n");
@@ -376,7 +373,7 @@ describe("consume e scadenza dello stato consented", () => {
     logged.length = 0;
     const p = near([{ type: "Transfer", deposit: 10n }]);
     const { consent, store, now } = fresh(p);
-    expect(consentPassed(verifyConsent(consent, p, { store, now: now + 1, log }))).toBe(true);
+    expect(consentPassed(verifyConsent(consent, p, { amount: payloadAmount(p), store, now: now + 1, log }))).toBe(true);
     const ev = consumeConsent(consent, p, { store, now: now + 2, log, amount: 10n });
     expect(ev.kind).toBe("consumed");
     expect(ev.reason).toBe("Consumed");
@@ -389,19 +386,13 @@ describe("consume e scadenza dello stato consented", () => {
     logged.length = 0;
     const p = near([{ type: "Transfer", deposit: 10n }]);
     const { consent, store, now } = fresh(p);
-    expect(consentPassed(verifyConsent(consent, p, { store, now: now + 1, log }))).toBe(true);
+    expect(consentPassed(verifyConsent(consent, p, { amount: payloadAmount(p), store, now: now + 1, log }))).toBe(true);
     logged.length = 0;
-    expect(() => consumeConsent(consent, p, { store, now: now + CONSENT_TTL_MS + 1, log, amount: 10n })).toThrow(ConsentError);
-    try {
-      consumeConsent(consent, p, { store, now: now + CONSENT_TTL_MS + 1, log, amount: 10n });
-    } catch (e) {
-      expect(e).toBeInstanceOf(ConsentError);
-      const err = e as ConsentError;
-      expect(err.code).toBe("Expired");
-      expect(err.event.kind).toBe("expired");
-      expect(err.event.reason).toBe("Expired");
-      expect(err.event.amount).toBe(10n);
-    }
+    expect(consumeConsent(consent, p, { store, now: now + CONSENT_TTL_MS + 1, log, amount: 10n }).kind).not.toBe("consumed");
+    const expired = consumeConsent(consent, p, { store, now: now + CONSENT_TTL_MS + 1, log, amount: 10n });
+    expect(expired.kind).toBe("expired");
+    expect(expired.reason).toBe("Expired");
+    expect(expired.amount).toBe(10n);
     expect(logged.length).toBeGreaterThanOrEqual(1);
     expect(logged[0]).toMatchObject({ kind: "expired", reason: "Expired", amount: 10n });
   });
@@ -409,17 +400,11 @@ describe("consume e scadenza dello stato consented", () => {
   it("consume senza amount si blocca con MissingAmount e non cambia lo stato", () => {
     const p = near([{ type: "Transfer", deposit: 10n }]);
     const { consent, store, now } = fresh(p);
-    verifyConsent(consent, p, { store, now: now + 1 });
-    try {
-      consumeConsent(consent, p, { store, now: now + 2 });
-      throw new Error("expected throw");
-    } catch (e) {
-      expect(e).toBeInstanceOf(ConsentError);
-      const err = e as ConsentError;
-      expect(err.code).toBe("MissingAmount");
-      expect(err.event.kind).toBe("blocked");
-      expect(err.event.amount).toBe(10n);
-    }
+    verifyConsent(consent, p, { amount: payloadAmount(p), store, now: now + 1 });
+    const missingAmt = consumeConsent(consent, p, { store, now: now + 2 });
+    expect(missingAmt.kind).toBe("blocked");
+    expect(missingAmt.reason).toBe("MissingAmount");
+    expect(missingAmt.amount).toBe(10n);
     // still consumable with the matching amount
     const ev = consumeConsent(consent, p, { store, now: now + 3, amount: 10n });
     expect(ev.kind).toBe("consumed");
@@ -429,29 +414,24 @@ describe("consume e scadenza dello stato consented", () => {
   it("consume con amount diverso da quello approvato si blocca con AmountMismatch", () => {
     const p = near([{ type: "Transfer", deposit: 10n }]);
     const { consent, store, now } = fresh(p);
-    verifyConsent(consent, p, { store, now: now + 1 });
-    try {
-      consumeConsent(consent, p, { store, now: now + 2, amount: 99n });
-      throw new Error("expected throw");
-    } catch (e) {
-      const err = e as ConsentError;
-      expect(err.code).toBe("AmountMismatch");
-      expect(err.event.kind).toBe("blocked");
-      expect(err.event.amount).toBe(99n);
-    }
+    verifyConsent(consent, p, { amount: payloadAmount(p), store, now: now + 1 });
+    const mismatch = consumeConsent(consent, p, { store, now: now + 2, amount: 99n });
+    expect(mismatch.kind).toBe("blocked");
+    expect(mismatch.reason).toBe("AmountMismatch");
+    expect(mismatch.amount).toBe(99n);
   });
 
   it("prune toglie i record vecchi ma il replay sullo stesso planId resta bloccato", () => {
     const p = near([{ type: "Transfer", deposit: 10n }]);
     const { consent, store, now } = fresh(p);
-    verifyConsent(consent, p, { store, now: now + 1 });
+    verifyConsent(consent, p, { amount: payloadAmount(p), store, now: now + 1 });
     consumeConsent(consent, p, { store, now: now + 2, amount: 10n });
     expect(store.size).toBe(1);
     store.prune(now + 2 + CONSENT_WINDOW_MS + 1);
     expect(store.size).toBe(0);
     expect(store.seen(approvalView(p).payloadHash)).toBe(true);
-    const again = issueConsent(approvalView(p), { now: now + CONSENT_WINDOW_MS + 10, nonce: "0xbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb" });
-    const r = verifyConsent(again, p, { store, now: now + CONSENT_WINDOW_MS + 11, log });
+    const again = mustIssue(approvalView(p), { now: now + CONSENT_WINDOW_MS + 10, nonce: "0xbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb", store, amount: 10n });
+    const r = verifyConsent(again, p, { amount: payloadAmount(p), store, now: now + CONSENT_WINDOW_MS + 11, log });
     expect(consentPassed(r)).toBe(false);
     if (r.ok) return;
     expect(r.reason).toBe("ConsentReplay");
@@ -460,7 +440,7 @@ describe("consume e scadenza dello stato consented", () => {
   it("planId negli eventi è minuscolo", () => {
     const p = near([{ type: "Transfer", deposit: 1n }]);
     const { consent, store, now, view } = fresh(p);
-    const r = verifyConsent(consent, p, { store, now: now + 1 });
+    const r = verifyConsent(consent, p, { amount: payloadAmount(p), store, now: now + 1 });
     if (!r.ok) throw new Error("expected ok");
     expect(r.event.planId).toBe(r.event.planId.toLowerCase());
     expect(r.event.planId).toBe(view.payloadHash.toLowerCase());
@@ -473,15 +453,12 @@ describe("lezioni review: config, orologio, storico, redazione", () => {
     const view = approvalView(p);
     for (const ttlMs of [NaN, 0, Infinity, -1, "120000" as unknown as number]) {
       logged.length = 0;
-      try {
-        issueConsent(view, { now: NOW, ttlMs, log });
-        throw new Error("expected throw");
-      } catch (e) {
-        expect(e).toBeInstanceOf(ConsentError);
-        const err = e as ConsentError;
-        expect(err.code).toBe("BAD_CONFIG");
-        expect(err.event.kind).toBe("blocked");
-        expect(err.event.reason).toBe("BAD_CONFIG: ttlMs");
+      const r = issueConsent(view, { now: NOW, ttlMs, log });
+      expect(r.ok).toBe(false);
+      if (!r.ok) {
+        expect(r.reason).toBe("BAD_CONFIG");
+        expect(r.record.kind).toBe("blocked");
+        expect(r.record.reason).toBe("BAD_CONFIG: ttlMs");
       }
     }
   });
@@ -489,29 +466,39 @@ describe("lezioni review: config, orologio, storico, redazione", () => {
   it("ttlMs richiesto più lungo del massimo viene stretto, uno più corto è rispettato", () => {
     const p = near([{ type: "Transfer", deposit: 1n }]);
     const view = approvalView(p);
-    const long = issueConsent(view, { now: NOW, ttlMs: CONSENT_TTL_MS * 10 });
-    expect(long.expiresAt - long.issuedAt).toBe(CONSENT_TTL_MS);
-    const short = issueConsent(view, { now: NOW, ttlMs: 15_000 });
+    const mid = mustIssue(view, { now: NOW, ttlMs: CONSENT_TTL_MS * 10 });
+    expect(mid.expiresAt - mid.issuedAt).toBe(CONSENT_TTL_MS * 10);
+    const short = mustIssue(view, { now: NOW, ttlMs: 15_000 });
     expect(short.expiresAt - short.issuedAt).toBe(15_000);
-    const missing = issueConsent(view, { now: NOW });
+    const missing = mustIssue(view, { now: NOW });
     expect(missing.expiresAt - missing.issuedAt).toBe(CONSENT_TTL_MS);
+    const max = 86_400_000; // 24h hard maximum
+    const atMax = mustIssue(view, { now: NOW, ttlMs: max, nonce: "0x11111111111111111111111111111111" });
+    expect(atMax.expiresAt - atMax.issuedAt).toBe(max);
+    const over = issueConsent(view, { now: NOW, ttlMs: max + 1, log });
+    expect(over.ok).toBe(false);
+    if (!over.ok) {
+      expect(over.reason).toBe("BAD_CONFIG");
+      expect(over.record.reason).toBe("BAD_CONFIG: ttlMs");
+      expect(over.record.kind).toBe("blocked");
+    }
   });
 
   it("now non finito o all'indietro: blocked BAD_NOW, nessuno stato scritto, emit non crasha", () => {
     const p = near([{ type: "Transfer", deposit: 10n }]);
     const { consent, store, now } = fresh(p);
-    expect(consentPassed(verifyConsent(consent, p, { store, now: now + 1, log }))).toBe(true);
+    expect(consentPassed(verifyConsent(consent, p, { amount: payloadAmount(p), store, now: now + 1, log }))).toBe(true);
     expect(store.size).toBe(1);
     const size = store.size;
     logged.length = 0;
-    const rNaN = verifyConsent(consent, p, { store, now: NaN, log });
+    const rNaN = verifyConsent(consent, p, { amount: payloadAmount(p), store, now: NaN, log });
     expect(rNaN.ok).toBe(false);
     if (!rNaN.ok) {
       expect(rNaN.reason).toBe("BAD_NOW");
       expect(rNaN.record.kind).toBe("blocked");
       expect(Number.isFinite(Date.parse(rNaN.record.ts))).toBe(true);
     }
-    const rBack = verifyConsent(consent, p, { store, now: now, log }); // now < lastNow (now+1)
+    const rBack = verifyConsent(consent, p, { amount: payloadAmount(p), store, now: now, log }); // now < lastNow (now+1)
     expect(rBack.ok).toBe(false);
     if (!rBack.ok) {
       expect(rBack.reason).toBe("BAD_NOW");
@@ -525,15 +512,11 @@ describe("lezioni review: config, orologio, storico, redazione", () => {
     // consume with Infinity does not write NaN into the store
     const p2 = near([{ type: "Transfer", deposit: 3n }]);
     const f2 = fresh(p2);
-    verifyConsent(f2.consent, p2, { store: f2.store, now: now + 1 });
-    try {
-      consumeConsent(f2.consent, p2, { store: f2.store, now: Infinity, amount: 3n, log });
-    } catch (e) {
-      const err = e as ConsentError;
-      expect(err.code).toBe("BAD_NOW");
-      expect(err.event.kind).toBe("blocked");
-      expect(Number.isFinite(Date.parse(err.event.ts))).toBe(true);
-    }
+    verifyConsent(f2.consent, p2, { amount: payloadAmount(p2), store: f2.store, now: now + 1 });
+    const badNow = consumeConsent(f2.consent, p2, { store: f2.store, now: Infinity, amount: 3n, log });
+    expect(badNow.kind).toBe("blocked");
+    expect(badNow.reason).toBe("BAD_NOW");
+    expect(Number.isFinite(Date.parse(badNow.ts))).toBe(true);
     expect(f2.store.get(f2.consent.nonce)?.status).toBe("consented");
     expect(f2.store.get(f2.consent.nonce)?.decidedAt).not.toBeNaN();
   });
@@ -541,27 +524,22 @@ describe("lezioni review: config, orologio, storico, redazione", () => {
   it("remove e ricrea con lo stesso planId non azzera lo storico: il replay resta bloccato", () => {
     const p = near([{ type: "Transfer", deposit: 10n }]);
     const { consent, store, now, view } = fresh(p);
-    verifyConsent(consent, p, { store, now: now + 1 });
+    verifyConsent(consent, p, { amount: payloadAmount(p), store, now: now + 1 });
     consumeConsent(consent, p, { store, now: now + 2, amount: 10n });
     expect(store.historyOf(view.payloadHash)?.status).toBe("consumed");
     store.remove(consent.nonce);
     expect(store.size).toBe(0);
     expect(store.seen(view.payloadHash)).toBe(true);
-    const again = issueConsent(view, { now: now + 3, nonce: "0xcccccccccccccccccccccccccccccccc", store });
-    const r = verifyConsent(again, p, { store, now: now + 4, log });
+    const again = mustIssue(view, { now: now + 3, nonce: "0xcccccccccccccccccccccccccccccccc", store, amount: 10n });
+    const r = verifyConsent(again, p, { amount: payloadAmount(p), store, now: now + 4, log });
     expect(consentPassed(r)).toBe(false);
     if (!r.ok) {
       expect(r.reason).toBe("ConsentReplay");
       expect(r.record.kind).toBe("blocked");
     }
-    try {
-      consumeConsent(again, p, { store, now: now + 5, amount: 10n });
-      throw new Error("expected throw");
-    } catch (e) {
-      const err = e as ConsentError;
-      expect(err.code).toBe("Consumed");
-      expect(err.event.kind).toBe("blocked");
-    }
+    const replayed = consumeConsent(again, p, { store, now: now + 5, amount: 10n });
+    expect(replayed.kind).toBe("blocked");
+    expect(replayed.reason).toBe("Consumed");
   });
 
   it("redazione: esenta solo i nomi esatti KEEP_HEX; 0x+40 visibile; mai salt né nomi con key/secret/priv/seed/mnemonic/password", () => {
@@ -602,7 +580,7 @@ describe("lezioni review: config, orologio, storico, redazione", () => {
     expect(out.to).toBe(addr40);
     expect(out.salt).toBe("[redacted]");
     expect(out.privateKeyId).toBe("[redacted]");
-    expect(out.keyId).toBe("[redacted]");
+    expect(out.keyId).toBe(h64);
     expect(out.secretId).toBe("[redacted]");
     expect(out.seedHash).toBe("[redacted]");
     expect(out.mnemonicId).toBe("[redacted]");
@@ -659,7 +637,7 @@ describe("PlainSign: increaseAllowance, permit, setApprovalForAll, calldata malf
       expect(() => exactText(payload)).not.toThrow();
       expect(() => approvalView(payload)).not.toThrow();
       const store = storeOf();
-      const r = verifyConsent(null, payload, { store, now: NOW, log });
+      const r = verifyConsent(null, payload, { amount: payloadAmount(payload), store, now: NOW, log });
       expect(r.ok, sel).toBe(false);
       if (!r.ok) {
         expect(r.reason, sel).toBe("MalformedApproval");
@@ -673,7 +651,7 @@ describe("PlainSign: increaseAllowance, permit, setApprovalForAll, calldata malf
     expect(u).toHaveLength(1);
     expect(u[0]!.text).toBe("Azione non riconosciuta: controlla il testo esatto.");
     expect(u[0]!.risk).toBe("unknown");
-    const ur = verifyConsent(null, unknown, { store: storeOf(), now: NOW });
+    const ur = verifyConsent(null, unknown, { amount: payloadAmount(unknown), store: storeOf(), now: NOW });
     expect(ur.ok).toBe(false);
     if (!ur.ok) expect(ur.reason).not.toBe("MalformedApproval");
   });
@@ -681,19 +659,12 @@ describe("PlainSign: increaseAllowance, permit, setApprovalForAll, calldata malf
   it("consume di un piano con approve/permit tronco si blocca con MalformedApproval e non cambia lo stato", () => {
     const pOk = evm(approveData(SPENDER, 2_000_000n));
     const { consent, store, now, view } = fresh(pOk);
-    expect(consentPassed(verifyConsent(consent, pOk, { store, now: now + 1 }))).toBe(true);
+    expect(consentPassed(verifyConsent(consent, pOk, { amount: payloadAmount(pOk), store, now: now + 1 }))).toBe(true);
     const truncated = evm(("0x095ea7b3" + "00") as Hex);
     logged.length = 0;
-    try {
-      consumeConsent(consent, truncated, { store, now: now + 2, amount: 2_000_000n, log });
-      throw new Error("expected throw");
-    } catch (e) {
-      expect(e).toBeInstanceOf(ConsentError);
-      const err = e as ConsentError;
-      expect(err.code).toBe("MalformedApproval");
-      expect(err.event.kind).toBe("blocked");
-      expect(err.event.reason).toBe("MalformedApproval");
-    }
+    const mal = consumeConsent(consent, truncated, { store, now: now + 2, amount: 2_000_000n, log });
+    expect(mal.kind).toBe("blocked");
+    expect(mal.reason).toBe("MalformedApproval");
     expect(store.get(consent.nonce)?.status).toBe("consented");
     // still consumable with the original, well-formed payload
     const ev = consumeConsent(consent, pOk, { store, now: now + 3, amount: 2_000_000n });
@@ -713,7 +684,7 @@ describe("PlainSign: increaseAllowance, permit, setApprovalForAll, calldata malf
       expect(p.some((x) => /hex 0x valido/i.test(x.text))).toBe(true);
       expect(p.map((x) => x.text).join(" ")).not.toMatch(/Stai inviando|Stai autorizzando|Stai chiamando/);
       const { store, now } = { store: storeOf(), now: NOW };
-      const r = verifyConsent(null, payload, { store, now });
+      const r = verifyConsent(null, payload, { amount: payloadAmount(payload), store, now });
       expect(r.ok).toBe(false);
       if (!r.ok) {
         expect(r.record.kind).toBe("blocked");
@@ -732,12 +703,231 @@ describe("PlainSign: increaseAllowance, permit, setApprovalForAll, calldata malf
       expect(p[0]!.text).toBe("Azione non riconosciuta: controlla il testo esatto.");
       expect(p.some((x) => /valore nativo.*non è un numero valido/i.test(x.text))).toBe(true);
       expect(p.map((x) => x.text).join(" ")).not.toMatch(/Stai inviando/);
-      const r = verifyConsent(null, payload, { store: storeOf(), now: NOW });
+      const r = verifyConsent(null, payload, { amount: payloadAmount(payload), store: storeOf(), now: NOW });
       expect(r.ok).toBe(false);
       if (!r.ok) {
         expect(r.record.kind).toBe("blocked");
         expect(r.reason === "MALFORMED" || r.reason === "ConsentMalformed").toBe(true);
       }
+    }
+  });
+});
+
+describe("review Primo: store, scadenza, importi, planId", () => {
+  it("TTL 120s con expiresAt gonfiato dal chiamante: oltre il TTL è scaduto (repro di Primo)", () => {
+    const p = near([{ type: "Transfer", deposit: 10n }]);
+    const store = storeOf();
+    const view = approvalView(p);
+    const consent = mustIssue(view, { now: NOW, ttlMs: CONSENT_TTL_MS, store, amount: 10n });
+    expect(consent.expiresAt - consent.issuedAt).toBe(CONSENT_TTL_MS);
+    expect(store.get(consent.nonce)?.expiresAt).toBe(consent.expiresAt);
+    consent.expiresAt = NOW + 60 * 60 * 1000;
+    const r = verifyConsent(consent, p, { store, now: NOW + CONSENT_TTL_MS + 1, log, amount: 10n });
+    expect(r.ok).toBe(false);
+    if (!r.ok) {
+      expect(r.reason).toBe("ConsentExpired");
+      expect(r.record.kind).toBe("expired");
+    }
+  });
+
+  it("verify e consume usano solo la scadenza dello store, mai quella del chiamante", () => {
+    const p = near([{ type: "Transfer", deposit: 10n }]);
+    const { consent, store } = fresh(p);
+    consent.expiresAt = NOW + 60 * 60 * 1000;
+    consent.issuedAt = NOW - 1;
+    const r = verifyConsent(consent, p, { store, now: NOW + 1, amount: 10n });
+    expect(consentPassed(r)).toBe(true);
+    consent.expiresAt = NOW + 60 * 60 * 1000;
+    const ev = consumeConsent(consent, p, { store, now: NOW + 2, amount: 10n });
+    expect(ev.kind).toBe("consumed");
+  });
+
+  it("senza record nello store verify rifiuta; expiresAt-issuedAt oltre il TTL rifiuta", () => {
+    const p = near([{ type: "Transfer", deposit: 10n }]);
+    const view = approvalView(p);
+    const issued = mustIssue(view, { now: NOW, amount: 10n }); // no store
+    const store = storeOf();
+    const missing = verifyConsent(issued, p, { store, now: NOW + 1, amount: 10n, log });
+    expect(missing.ok).toBe(false);
+    if (!missing.ok) expect(missing.reason).toBe("NotConsented");
+    const withStore = storeOf();
+    const consent = mustIssue(view, { now: NOW, store: withStore, amount: 10n });
+    const row = withStore.get(consent.nonce)!;
+    withStore.put({ ...row, expiresAt: row.issuedAt + 86_400_000 + 1 });
+    const long = verifyConsent(consent, p, { store: withStore, now: NOW + 1, amount: 10n, log });
+    expect(long.ok).toBe(false);
+    if (!long.ok) {
+      expect(long.reason).toBe("BAD_CONFIG");
+      expect(long.record.kind).toBe("blocked");
+    }
+  });
+
+  it("payloadAmount include addedValue e il value del permit", () => {
+    expect(payloadAmount(evm(increaseData(SPENDER, 2_000_000n)))).toBe(2_000_000n);
+    expect(payloadAmount(evm(permitData(3_000_000n)))).toBe(3_000_000n);
+    expect(payloadAmount(evm(approveData(SPENDER, 4_000_000n)))).toBe(4_000_000n);
+  });
+
+  it("in verify amount è obbligatorio: MissingAmount e AmountMismatch", () => {
+    const p = near([{ type: "Transfer", deposit: 10n }]);
+    const { consent, store, now } = fresh(p);
+    const missing = verifyConsent(consent, p, { store, now: now + 1, log });
+    expect(missing.ok).toBe(false);
+    if (!missing.ok) {
+      expect(missing.reason).toBe("MissingAmount");
+      expect(missing.record.kind).toBe("blocked");
+    }
+    expect(store.get(consent.nonce)?.status).toBe("issued");
+    const mismatch = verifyConsent(consent, p, { store, now: now + 1, log, amount: 99n });
+    expect(mismatch.ok).toBe(false);
+    if (!mismatch.ok) {
+      expect(mismatch.reason).toBe("AmountMismatch");
+      expect(mismatch.record.kind).toBe("blocked");
+    }
+    expect(store.get(consent.nonce)?.status).toBe("issued");
+  });
+
+  it("illimitato vale da maxUint256/2 in su", () => {
+    const half = maxUint256 / 2n;
+    const high = plainExplanation(evm(approveData(SPENDER, half)));
+    expect(high[0]!.text).toMatch(/ILLIMITATA/);
+    expect(high[0]!.risk).toBe("high");
+    expect(exactText(evm(approveData(SPENDER, half))).join("\n")).toMatch(/ILLIMITATO/);
+    expect(plainExplanation(evm(increaseData(SPENDER, half)))[0]!.text).toMatch(/ILLIMITATA/);
+    expect(plainExplanation(evm(permitData(half)))[0]!.text).toMatch(/ILLIMITATA/);
+    const justUnder = half - 1n;
+    expect(plainExplanation(evm(approveData(SPENDER, justUnder)))[0]!.risk).toBe("normal");
+    expect(exactText(evm(approveData(SPENDER, justUnder))).join("\n")).not.toMatch(/ILLIMITATO/);
+  });
+
+  it("planId deve essere 0x + 64 hex (come normalizePlanId)", () => {
+    const p = near([{ type: "Transfer", deposit: 1n }]);
+    const view = approvalView(p);
+    const store = storeOf();
+    for (const bad of ["0xzz", "0xabc", "0x" + "ab".repeat(31)] as Hex[]) {
+      const r = issueConsent({ ...view, payloadHash: bad }, { now: NOW, store, amount: 1n, log });
+      expect(r.ok).toBe(false);
+      if (!r.ok) {
+        expect(r.reason).toBe("MALFORMED");
+        expect(r.record.kind).toBe("blocked");
+        expect(r.record.planId).toBe(("0x" + "00".repeat(32)));
+      }
+    }
+    const ok = mustIssue(view, { now: NOW, store, amount: 1n });
+    expect(ok.payloadHash).toMatch(/^0x[0-9a-f]{64}$/);
+  });
+});
+
+describe("review QC/Primo: redazione, orologio, lookup, tetto ttl", () => {
+  it("redazione: BIP39 in Title Case e MAIUSCOLO, base58 Solana 87-88, prefisso ed25519:, 0X+64 hex", () => {
+    const phrase = "alpha bravo charlie delta echo foxtrot golf hotel india juliet kilo lima";
+    const title = phrase.split(" ").map((w) => w[0]!.toUpperCase() + w.slice(1)).join(" ");
+    const upper = phrase.toUpperCase();
+    const punct = phrase.replace(/ /g, ",");
+    const dashed = phrase.replace(/ /g, "-");
+    const nbsp = phrase.replace(/ /g, "\u00A0");
+    const sol87 = "1".repeat(87);
+    const sol88 = "2".repeat(88);
+    const seed44 = "3".repeat(44);
+    const oddHex = "0X" + "ab".repeat(32);
+    const bytes32 = new Uint8Array(32);
+    const buf64 = Buffer.alloc(64);
+    const ab32 = new ArrayBuffer(32);
+    const out = redactSecrets({
+      memo: title,
+      note: upper,
+      punct,
+      dashed,
+      nbsp,
+      data: sol87,
+      value: sol88,
+      account: "ed25519: not-a-real-key",
+      sigtype: "secp256k1: also-secret",
+      seedPhrase: seed44,
+      secretKey: bytes32,
+      keyBytes: buf64,
+      priv: ab32,
+      raw: oddHex,
+      planId: oddHex,
+      key: seed44,
+      passphrase: "x",
+      publicKey: "ed25519:visible-public",
+      keyId: "req-7",
+      seededAt: NOW,
+    }) as Record<string, unknown>;
+    expect(out.memo).toBe("[redacted]");
+    expect(out.note).toBe("[redacted]");
+    expect(out.punct).toBe("[redacted]");
+    expect(out.dashed).toBe("[redacted]");
+    expect(out.nbsp).toBe("[redacted]");
+    expect(out.data).toBe("[redacted]");
+    expect(out.value).toBe("[redacted]");
+    expect(out.account).toBe("[redacted]");
+    expect(out.sigtype).toBe("[redacted]");
+    expect(out.seedPhrase).toBe("[redacted]");
+    expect(out.secretKey).toBe("[redacted]");
+    expect(out.keyBytes).toBe("[redacted]");
+    expect(out.priv).toBe("[redacted]");
+    expect(out.raw).toBe("[redacted]");
+    expect(out.planId).toBe(oddHex);
+    expect(out.key).toBe("[redacted]");
+    expect(out.passphrase).toBe("[redacted]");
+    expect(out.publicKey).toBe("ed25519:visible-public");
+    expect(out.keyId).toBe("req-7");
+    expect(out.seededAt).toBe("[redacted]");
+  });
+
+  it("ttl 25h dà BAD_CONFIG con evento blocked; il massimo 24h è accettato", () => {
+    const p = near([{ type: "Transfer", deposit: 1n }]);
+    const view = approvalView(p);
+    const h24 = 24 * 60 * 60 * 1000;
+    const h25 = 25 * 60 * 60 * 1000;
+    const ok = mustIssue(view, { now: NOW, ttlMs: h24, nonce: "0x22222222222222222222222222222222" });
+    expect(ok.expiresAt - ok.issuedAt).toBe(h24);
+    logged.length = 0;
+    const over = issueConsent(view, { now: NOW, ttlMs: h25, log });
+    expect(over.ok).toBe(false);
+    if (!over.ok) {
+      expect(over.reason).toBe("BAD_CONFIG");
+      expect(over.record.kind).toBe("blocked");
+      expect(over.record.reason).toBe("BAD_CONFIG: ttlMs");
+    }
+  });
+
+  it("ttl 1000, t=1_000_000 poi 1_005_000 poi 1_000_500: non torna eseguibile", () => {
+    const p = near([{ type: "Transfer", deposit: 10n }]);
+    const store = storeOf();
+    const view = approvalView(p);
+    const consent = mustIssue(view, { now: 1_000_000, ttlMs: 1000, store, amount: 10n, nonce: "0xdddddddddddddddddddddddddddddddd" });
+    const expired = verifyConsent(consent, p, { store, now: 1_005_000, amount: 10n, log });
+    expect(expired.ok).toBe(false);
+    if (!expired.ok) expect(expired.reason).toBe("ConsentExpired");
+    const back = verifyConsent(consent, p, { store, now: 1_000_500, amount: 10n, log });
+    expect(back.ok).toBe(false);
+    if (!back.ok) {
+      expect(back.reason).toBe("BAD_NOW");
+      expect(back.record.kind).toBe("blocked");
+    }
+    expect(store.get(consent.nonce)?.status).toBe("expired");
+  });
+
+  it("lookup di un id sconosciuto o malformato emette blocked e non lancia", () => {
+    const store = storeOf();
+    logged.length = 0;
+    const unknown = store.lookup("0x" + "ab".repeat(32), { now: NOW, log });
+    expect(unknown.ok).toBe(false);
+    if (!unknown.ok) {
+      expect(unknown.reason).toBe("Unknown");
+      expect(unknown.event.kind).toBe("blocked");
+      expect(unknown.event.planId).toBe("0x" + "ab".repeat(32));
+    }
+    const bad = store.lookup("not-a-plan", { now: NOW, log });
+    expect(bad.ok).toBe(false);
+    if (!bad.ok) {
+      expect(bad.reason).toBe("MALFORMED");
+      expect(bad.event.kind).toBe("blocked");
+      expect(bad.event.planId).toBe("0x" + "00".repeat(32));
+      expect(JSON.stringify(bad.event, (_k, v) => typeof v === "bigint" ? v.toString() : v)).not.toContain("not-a-plan");
     }
   });
 });
