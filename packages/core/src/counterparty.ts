@@ -2,6 +2,7 @@ import { isAddress, type Address, type Hex } from "viem";
 import { blockedEvent, normalizeAddress, normalizePlanId, normalizeToken, type QueueEvent } from "./events";
 import { redactSecrets } from "./redact";
 import { parseCount } from "./simulate";
+import { tightenNumber } from "./limits";
 
 /**
  * Counterparty check before paying (idea: Reins). Read-only: eth_getCode plus local lists.
@@ -25,10 +26,14 @@ export type CounterpartyInput = {
   strictAllowlist?: boolean;
   /** A first-time payee is blocked instead of warned. */
   blockNew?: boolean;
-  /** Hex chars to match at each end for address-poisoning (default 4). */
+  /** Hex chars to match at each end for address-poisoning (default 4). May only tighten (smaller), never widen. */
   lookalikeChars?: unknown;
   now?: unknown;
+  config?: { lookalikeChars?: unknown };
 };
+
+/** Default lookalike window: first and last 4 hex chars. Input may only lower this. */
+export const COUNTERPARTY_DEFAULTS = { lookalikeChars: 4 } as const;
 
 export type Finding = {
   code:
@@ -40,7 +45,8 @@ export type Finding = {
     | "CounterpartyEoa"
     | "Allowlisted"
     | "NotAllowlisted"
-    | "SimUnavailable";
+    | "SimUnavailable"
+    | "BadConfig";
   severity: "ok" | "warning" | "blocked";
   detail: string;
 };
@@ -147,11 +153,13 @@ export async function checkCounterparty(input: CounterpartyInput | null | undefi
     const deny = asAddrList(input.denylist);
     const paid = asAddrList(input.paidBefore);
     const known = [...new Set([...allow, ...paid, ...asAddrList(input.known)])];
-    const lookN = input.lookalikeChars === undefined ? 4 : Number(input.lookalikeChars);
-    if (input.lookalikeChars !== undefined && (!Number.isInteger(lookN) || lookN < 2)) {
-      findings.push({ code: "SimUnavailable", severity: "blocked", detail: "lookalikeChars non valido" });
-      return emit("SimUnavailable", { address });
+    const offeredChars = input.config?.lookalikeChars ?? input.lookalikeChars;
+    const look = tightenNumber(offeredChars, COUNTERPARTY_DEFAULTS.lookalikeChars, true);
+    if (!look.ok) {
+      findings.push({ code: "BadConfig", severity: "blocked", detail: look.detail });
+      return emit("BadConfig", { address });
     }
+    const lookN = look.value;
 
     if (address === ZERO) {
       findings.push({ code: "ZeroAddress", severity: "blocked", detail: "indirizzo zero" });

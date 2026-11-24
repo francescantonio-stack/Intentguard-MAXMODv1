@@ -12,3 +12,4 @@ export * from "./probe";
 export * from "./redact";
 export * from "./events";
 export * from "./counterparty";
+export * from "./limits";

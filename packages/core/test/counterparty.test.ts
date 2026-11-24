@@ -89,3 +89,26 @@ describe("checkCounterparty", () => {
     }
   });
 });
+
+describe("config limits", () => {
+  it("blocks a widened lookalike window or invalid lookalikeChars (BadConfig)", async () => {
+    const cases = [100, 5, 1e9, 0, -0, NaN, Infinity, "4", 0n] as const;
+    for (const lookalikeChars of cases) {
+      const r = await checkCounterparty({ address: A, paidBefore: [A], lookalikeChars, planId: PLAN, amount: 1n, now: 1 }, eoa);
+      expect(r.verdict, String(lookalikeChars)).toBe("blocked");
+      expect(r.event?.reason).toBe("BadConfig");
+    }
+  });
+
+  it("accepts a tighter window and flags a 2-char lookalike that would pass at 4", async () => {
+    const known = "0x1111111111111111111111111111111111111111";
+    const fake = "0x11aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa11";
+    expect(isLookalike(known, fake, 4)).toBe(false);
+    expect(isLookalike(known, fake, 2)).toBe(true);
+    const loose = await checkCounterparty({ address: fake, paidBefore: [known], planId: PLAN, amount: 2n, now: 1 }, eoa);
+    expect(loose.event?.reason).not.toBe("LookalikeAddress");
+    const tight = await checkCounterparty({ address: fake, paidBefore: [known], lookalikeChars: 2, planId: PLAN, amount: 2n, now: 1 }, eoa);
+    expect(tight.verdict).toBe("blocked");
+    expect(tight.event?.reason).toBe("LookalikeAddress");
+  });
+});

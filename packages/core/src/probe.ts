@@ -2,6 +2,7 @@ import { BASE_SEPOLIA, MONAD_TESTNET } from "./chains";
 import type { Sourced } from "./simulate";
 import { blockedEvent, type QueueEvent } from "./events";
 import { keccak256, stringToHex } from "viem";
+import { tightenNumber } from "./limits";
 
 /** Public testnet endpoints used by the probe page (idea: Railguard). Never mainnet, never user-supplied URLs. */
 export const PROBE_NETWORKS = [
@@ -11,6 +12,9 @@ export const PROBE_NETWORKS = [
 ] as const;
 
 export type ProbeNetwork = (typeof PROBE_NETWORKS)[number];
+
+/** Default RPC timeout. Input may only lower it. */
+export const PROBE_DEFAULTS: { timeoutMs: number } = { timeoutMs: 15_000 };
 
 export type JsonRpc = (method: string, params?: unknown[]) => Promise<unknown>;
 
@@ -80,12 +84,21 @@ async function nearProbe(net: ProbeNetwork, rpc: JsonRpc, now: number): Promise<
 }
 
 /** Probe one or all known testnets. `rpcFor` is injected in tests; default uses public RPC (read-only). */
-export async function probeNetworks(o: { rpcFor?: (net: ProbeNetwork) => JsonRpc; ids?: string[]; now?: number } = {}): Promise<NetworkProbe[]> {
+export async function probeNetworks(o: { rpcFor?: (net: ProbeNetwork) => JsonRpc; ids?: string[]; now?: number; config?: { timeoutMs?: unknown } } = {}): Promise<NetworkProbe[]> {
   const now = o.now ?? Date.now();
   const list = PROBE_NETWORKS.filter((n) => !o.ids || o.ids.includes(n.id));
+  const cap = tightenNumber(o.config?.timeoutMs, PROBE_DEFAULTS.timeoutMs, true);
+  if (!cap.ok || (o.config !== undefined && (o.config == null || typeof o.config !== "object" || Array.isArray(o.config)))) {
+    return list.map((net) => ({
+      id: net.id, ok: false, error: cap.ok ? "BadConfig: config non valida" : `BadConfig: ${cap.detail}`,
+      native: net.native, rpc: net.rpc, explorer: net.explorer, checkedAt: Date.now(),
+      event: failEvent(net, "BadConfig"),
+    }));
+  }
+  const timeoutMs = cap.value;
   const out: NetworkProbe[] = [];
   for (const net of list) {
-    const rpc = o.rpcFor?.(net) ?? defaultRpc(net);
+    const rpc = o.rpcFor?.(net) ?? defaultRpc(net, timeoutMs);
     try {
       out.push(net.kind === "near" ? await nearProbe(net, rpc, now) : await evmProbe(net, rpc, now));
     } catch (e) {
@@ -95,12 +108,13 @@ export async function probeNetworks(o: { rpcFor?: (net: ProbeNetwork) => JsonRpc
   return out;
 }
 
-function defaultRpc(net: ProbeNetwork): JsonRpc {
+function defaultRpc(net: ProbeNetwork, timeoutMs = PROBE_DEFAULTS.timeoutMs): JsonRpc {
   return async (method, params = []) => {
     const res = await fetch(net.rpc, {
       method: "POST",
       headers: { "content-type": "application/json" },
       body: JSON.stringify({ jsonrpc: "2.0", id: 1, method, params }),
+      signal: AbortSignal.timeout(timeoutMs),
     });
     const body = (await res.json()) as { result?: unknown; error?: { message?: string } };
     if (body.error) throw new Error(body.error.message ?? JSON.stringify(body.error));

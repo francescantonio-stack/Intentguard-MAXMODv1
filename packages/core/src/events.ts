@@ -24,7 +24,8 @@ export type BlockReason =
   | "ZeroAddress"
   | "LookalikeAddress"
   | "NewCounterparty"
-  | "CounterpartyContract";
+  | "CounterpartyContract"
+  | "BadConfig";
 
 export const normalizePlanId = (planId: string): Hex => {
   const s = planId.trim().toLowerCase();
