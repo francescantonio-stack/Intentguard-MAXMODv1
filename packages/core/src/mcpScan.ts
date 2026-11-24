@@ -124,22 +124,26 @@ export function normalizeToolName(n: string): string {
 }
 
 const B64 = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
-/** Decode a base64 run; returns text only if it is mostly printable, else null. */
+/** Decode a base64 run as UTF-8 (non-ASCII text such as Chinese included); text only if mostly printable, else null. */
 function decodeB64(run: string): string | null {
   const clean = run.replace(/-/g, "+").replace(/_/g, "/").replace(/=+$/, "");
-  let bits = 0, acc = 0, out = "";
+  let bits = 0, acc = 0;
+  const bytes: number[] = [];
   for (const ch of clean) {
     const v = B64.indexOf(ch);
     if (v < 0) return null;
-    acc = (acc << 6) | v; bits += 6;
-    if (bits >= 8) { bits -= 8; out += String.fromCharCode((acc >> bits) & 0xff); }
+    acc = ((acc << 6) | v) & 0xffffff; bits += 6;
+    if (bits >= 8) { bits -= 8; bytes.push((acc >> bits) & 0xff); }
   }
-  if (out.length < 8) return null;
-  const printable = [...out].filter((c) => c >= " " && c <= "~").length;
-  return printable / out.length >= 0.9 ? out : null;
+  return bytesToText(bytes);
 }
 
-const printableRatio = (t: string) => (t.length ? [...t].filter((c) => (c >= " " && c <= "~") || c === "\n" || c === "\t" || c > "\u00A0").length / t.length : 0);
+// printable = letters, digits, punctuation, symbols, marks, spaces (any script), tab/newline
+const PRINTABLE = /[\p{L}\p{N}\p{P}\p{S}\p{M}\p{Zs}\t\n\r]/u;
+const printableRatio = (t: string) => {
+  const cs = [...t];
+  return cs.length ? cs.filter((c) => PRINTABLE.test(c)).length / cs.length : 0;
+};
 function bytesToText(bytes: number[]): string | null {
   if (bytes.length < 8) return null;
   try {
@@ -157,31 +161,41 @@ const DECODE_MAX_DEPTH = 3;
 const DECODE_MAX_VARIANTS = 64;
 const DECODE_MAX_CHARS = 262_144;
 /**
- * Decoded variants of a text: %xx runs, hex runs (also \xNN), base64 runs (recursive up to DECODE_MAX_DEPTH),
+ * Decoded variants of a text: %xx runs, hex runs (also \xNN), base64 runs (recursive up to DECODE_MAX_DEPTH levels;
+ * a result at the limit that is still decodable = overflow),
  * (rot13 is checked by the caller on the text and on each variant). Bounded by count and total size; `overflow` = budget hit (caller blocks, fail-closed).
  */
 /** rot13 of a text (its own inverse). */
 export const rot13 = ROT13;
+/** One decoding step: every result of decoding the %xx, \\xNN, hex and base64 runs of `t`. */
+function decodeOnce(t: string): string[] {
+  const out: string[] = [];
+  const add = (x: string | null) => { if (x !== null && x !== t) out.push(x); };
+  if (/%[0-9a-f]{2}/i.test(t)) {
+    add(t.replace(/(?:%[0-9a-f]{2})+/gi, (run) => bytesToText(run.slice(1).split("%").map((h) => parseInt(h, 16))) ?? run));
+  }
+  for (const m of t.matchAll(/(?:\\x[0-9a-f]{2}){8,}/gi)) add(bytesToText(m[0].slice(2).split(/\\x/i).map((h) => parseInt(h, 16))));
+  for (const m of t.matchAll(/(?:[0-9a-f]{2}){8,}/gi)) add(bytesToText(m[0].match(/../g)!.map((h) => parseInt(h, 16))));
+  for (const m of t.matchAll(/[A-Za-z0-9+/_-]{16,}={0,2}/g)) add(decodeB64(m[0]));
+  return out;
+}
+
 export function decodeVariants(text: string): { variants: string[]; overflow: boolean } {
   const variants: string[] = [];
   let total = 0, overflow = false;
-  const seen = new Set<string>();
+  const seen = new Set<string>([text]);
   const queue: Array<[string, number]> = [[text, 0]];
-  const push = (t: string | null, depth: number) => {
-    if (t === null || seen.has(t)) return;
-    if (variants.length >= DECODE_MAX_VARIANTS || total + t.length > DECODE_MAX_CHARS) { overflow = true; return; }
-    seen.add(t); variants.push(t); total += t.length;
-    if (depth < DECODE_MAX_DEPTH) queue.push([t, depth]);
-  };
   while (queue.length && !overflow) {
     const [t, d] = queue.shift()!;
-    const nd = d + 1;
-    if (/%[0-9a-f]{2}/i.test(t)) {
-      push(t.replace(/(?:%[0-9a-f]{2})+/gi, (run) => bytesToText(run.slice(1).split("%").map((h) => parseInt(h, 16))) ?? run), nd);
+    const next = decodeOnce(t).filter((x) => !seen.has(x));
+    if (!next.length) continue;
+    // at the depth limit something is STILL decodable: deeper nesting cannot be verified -> overflow (fail-closed)
+    if (d >= DECODE_MAX_DEPTH) { overflow = true; break; }
+    for (const x of next) {
+      if (variants.length >= DECODE_MAX_VARIANTS || total + x.length > DECODE_MAX_CHARS) { overflow = true; break; }
+      seen.add(x); variants.push(x); total += x.length;
+      queue.push([x, d + 1]);
     }
-    for (const m of t.matchAll(/(?:\\x[0-9a-f]{2}){8,}/gi)) push(bytesToText(m[0].slice(2).split(/\\x/i).map((h) => parseInt(h, 16))), nd);
-    for (const m of t.matchAll(/(?:[0-9a-f]{2}){8,}/gi)) push(bytesToText(m[0].match(/../g)!.map((h) => parseInt(h, 16))), nd);
-    for (const m of t.matchAll(/[A-Za-z0-9+/_-]{16,}={0,2}/g)) push(decodeB64(m[0]), nd);
   }
   return { variants, overflow };
 }
