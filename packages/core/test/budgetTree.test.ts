@@ -214,4 +214,11 @@ describe("BudgetTree", () => {
     expect(reasonOf(() => b.remove("nope"))).toBe("UnknownBudget");
     expect(events.filter((e) => e.kind === "blocked").map((e) => e.reason)).toEqual(["CannotRemove", "CannotRemove", "UnknownBudget"]);
   });
+
+  it("available / spentInWindow of an unknown id -> blocked UnknownBudget event", () => {
+    const { b, events } = setup();
+    expect(reasonOf(() => b.available("ghost"))).toBe("UnknownBudget");
+    expect(reasonOf(() => b.spentInWindow("ghost"))).toBe("UnknownBudget");
+    expect(events.map((e) => [e.kind, e.reason, e.id])).toEqual([["blocked", "UnknownBudget", "ghost"], ["blocked", "UnknownBudget", "ghost"]]);
+  });
 });

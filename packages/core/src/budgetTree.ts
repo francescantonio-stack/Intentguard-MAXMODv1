@@ -144,12 +144,14 @@ export class BudgetTree {
   spentInWindow(id: string): bigint {
     const now = this.nowOrBlock(id, 0n);
     this.prune(now);
+    if (!this.nodes.has(id)) this.block("UnknownBudget", `unknown budget ${id}`, id, 0n);
     return this.subtreeSpent(this.get(id));
   }
 
   available(id: string): bigint {
     const now = this.nowOrBlock(id, 0n);
     this.prune(now);
+    if (!this.nodes.has(id)) this.block("UnknownBudget", `unknown budget ${id}`, id, 0n);
     return this.availableAt(this.get(id));
   }
 
