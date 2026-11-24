@@ -7,3 +7,7 @@ export * from "./planner";
 export * from "./schema";
 export * from "./webauthn";
 export * from "./describe";
+export * from "./simulate";
+export * from "./probe";
+export * from "./redact";
+export * from "./events";
