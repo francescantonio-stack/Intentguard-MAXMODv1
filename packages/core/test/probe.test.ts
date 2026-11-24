@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { probeNetworks, PROBE_DEFAULTS, type JsonRpc, type ProbeNetwork } from "../src/probe";
+import { probeNetworks, createProbeRpc, PROBE_DEFAULTS, PROBE_NETWORKS, type JsonRpc, type ProbeNetwork } from "../src/probe";
 
 const evm: Record<string, unknown> = {
   eth_chainId: "0x279f", // 10143
@@ -79,5 +79,42 @@ describe("config limits", () => {
   it("accepts a tighter timeout and still probes with a mock RPC", async () => {
     const rows = await probeNetworks({ rpcFor, ids: ["monad-testnet"], config: { timeoutMs: 1_000 } });
     expect(rows[0]?.ok).toBe(true);
+  });
+});
+
+
+describe("nearProbe, clock and fetch", () => {
+  it("reports ok:false when NEAR status is missing or the RPC throws", async () => {
+    const empty = await probeNetworks({ ids: ["near-testnet"], rpcFor: () => async () => ({}), now: 1_700_000_000_000 });
+    expect(empty[0]?.ok).toBe(false);
+    expect(empty[0]?.error).toMatch(/incompleto|height/);
+    expect(empty[0]?.event?.reason).toBe("SimUnavailable");
+    const boom = await probeNetworks({ ids: ["near-testnet"], rpcFor: () => async () => { throw new Error("near down"); } });
+    expect(boom[0]?.ok).toBe(false);
+    expect(boom[0]?.error).toBe("near down");
+  });
+
+  it("measures latency with the injected clock, not Date.now()", async () => {
+    let t = 1_000;
+    const clock = () => { t += 25; return t; };
+    const rpcFor = (): JsonRpc => async (method) => {
+      if (method === "eth_chainId") return "0x279f";
+      if (method === "eth_blockNumber") return "0x10";
+      if (method === "eth_gasPrice") return "0x1";
+      if (method === "eth_getBlockByNumber") return { timestamp: "0x1" };
+      throw new Error(method);
+    };
+    const rows = await probeNetworks({ ids: ["monad-testnet"], rpcFor, now: 1_700_000_000_000, clock });
+    expect(rows[0]?.ok).toBe(true);
+    expect(rows[0]?.latencyMs?.value).toBeGreaterThan(0);
+    expect(rows[0]?.checkedAt).toBe(1_700_000_000_000);
+  });
+
+  it("createProbeRpc rejects a non-OK HTTP status and honors AbortController timeout", async () => {
+    const net = PROBE_NETWORKS[0]!;
+    const http = createProbeRpc(net, 5_000, async () => ({ ok: false, status: 503, json: async () => ({}) }));
+    await expect(http("eth_chainId")).rejects.toThrow(/HTTP 503/);
+    const ok = createProbeRpc(net, 5_000, async () => ({ ok: true, status: 200, json: async () => ({ result: "0x1" }) }));
+    expect(await ok("eth_chainId")).toBe("0x1");
   });
 });

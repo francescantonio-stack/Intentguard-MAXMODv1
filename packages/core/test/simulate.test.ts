@@ -2,9 +2,10 @@ import { describe, expect, it } from "vitest";
 import { maxUint256, encodeFunctionData, encodeErrorResult, type Address, type Hex } from "viem";
 import { erc20Abi, planExecutorAbi } from "../src/abi";
 import {
-  decodeTokenEffects, parseCount, revertReason, simSucceeded, simulateTx, toActionBlocked, toSafeHoldInput, toSuccessOddsInput, SIM_DEFAULTS,
+  decodeTokenEffects, parseCount, revertReason, simSucceeded, simulateTx, toActionBlocked, toSafeHoldInput, toSuccessOddsInput, checkSimulateApiInput, SIM_DEFAULTS,
   type ProposedTx, type SimClient,
 } from "../src/simulate";
+import { APPROVAL_SELECTORS } from "../src/approvals";
 
 const FROM = "0xd2FE6a3Ae252D6fb2f604805898177c8FdaAa24B" as Address;
 const TO = "0x1111111111111111111111111111111111111111" as Address;
@@ -14,11 +15,11 @@ const addr = (a: string) => a.toLowerCase();
 
 const tx = (over: Partial<ProposedTx> = {}): ProposedTx => ({ chainId: 10143, from: FROM, to: TO, data: "0x", value: 0n, ...over });
 
-function stub(h: Partial<{ call: unknown; estimateGas: bigint; getBalance: bigint; getGasPrice: bigint; callThrow: unknown; gasThrow: unknown }>): SimClient {
+function stub(h: Partial<{ call: unknown; estimateGas: bigint; getBalance: bigint; getGasPrice: bigint; callThrow: unknown; gasThrow: unknown; balanceThrow: unknown }>): SimClient {
   return {
     call: async () => { if (h.callThrow) throw h.callThrow; return { data: (h.call as Hex) ?? "0x" }; },
     estimateGas: async () => { if (h.gasThrow) throw h.gasThrow; return h.estimateGas ?? 21_000n; },
-    getBalance: async () => h.getBalance ?? 10n ** 18n,
+    getBalance: async () => { if (h.balanceThrow) throw h.balanceThrow; return h.getBalance ?? 10n ** 18n; },
     getGasPrice: h.getGasPrice !== undefined || true ? async () => h.getGasPrice ?? 1_000_000_000n : undefined,
   };
 }
@@ -108,6 +109,8 @@ describe("simulateTx", () => {
     expect(r.ok).toBe(true);
     expect(r.tokenEffects[0]).toMatchObject({ kind: "transfer", amount: { value: 42n } });
     const u = await simulateTx(tx({ to: TOKEN, data: approveData(TO, maxUint256) }), stub({}));
+    expect(u.ok).toBe(false);
+    expect(u.blockReason).toBe("UnlimitedApprove");
     expect(u.warnings.some((w) => w.code === "UNLIMITED_APPROVE")).toBe(true);
     expect(u.lines.join("\n")).toMatch(/ILLIMITATO/);
   });
@@ -237,7 +240,131 @@ describe("config limits", () => {
 
   it("accepts a tighter threshold and flags a smaller approve", async () => {
     const r = await simulateTx(tx({ to: TOKEN, data: approveData(TO, 100n) }), stub({}), { config: { unlimitedApproveMin: 50n } });
-    expect(r.ok).toBe(true);
+    expect(r.ok).toBe(false);
+    expect(r.blockReason).toBe("UnlimitedApprove");
     expect(r.warnings.some((w) => w.code === "UNLIMITED_APPROVE")).toBe(true);
+  });
+});
+
+
+const incAbi = [{ type: "function", name: "increaseAllowance", stateMutability: "nonpayable", inputs: [{ name: "spender", type: "address" }, { name: "addedValue", type: "uint256" }], outputs: [{ type: "bool" }] }] as const;
+const permit2612Abi = [{ type: "function", name: "permit", stateMutability: "nonpayable", inputs: [
+  { name: "owner", type: "address" }, { name: "spender", type: "address" }, { name: "value", type: "uint256" },
+  { name: "deadline", type: "uint256" }, { name: "v", type: "uint8" }, { name: "r", type: "bytes32" }, { name: "s", type: "bytes32" },
+], outputs: [] }] as const;
+const permitDaiAbi = [{ type: "function", name: "permit", stateMutability: "nonpayable", inputs: [
+  { name: "holder", type: "address" }, { name: "spender", type: "address" }, { name: "nonce", type: "uint256" },
+  { name: "expiry", type: "uint256" }, { name: "allowed", type: "bool" }, { name: "v", type: "uint8" }, { name: "r", type: "bytes32" }, { name: "s", type: "bytes32" },
+], outputs: [] }] as const;
+const setAllAbi = [{ type: "function", name: "setApprovalForAll", stateMutability: "nonpayable", inputs: [
+  { name: "operator", type: "address" }, { name: "approved", type: "bool" },
+], outputs: [] }] as const;
+const Z32 = ("0x" + "11".repeat(32)) as Hex;
+
+describe("approval variants are blocked when unlimited or malformed", () => {
+  it("blocks increaseAllowance(max), EIP-2612 permit(max), DAI permit(allowed=true) and setApprovalForAll(true)", async () => {
+    const cases: Array<[string, Hex]> = [
+      ["increaseAllowance", encodeFunctionData({ abi: incAbi, functionName: "increaseAllowance", args: [TO, maxUint256] })],
+      ["permit2612", encodeFunctionData({ abi: permit2612Abi, functionName: "permit", args: [FROM, TO, maxUint256, 1n, 27, Z32, Z32] })],
+      ["permitDAI", encodeFunctionData({ abi: permitDaiAbi, functionName: "permit", args: [FROM, TO, 0n, 1n, true, 27, Z32, Z32] })],
+      ["setApprovalForAll", encodeFunctionData({ abi: setAllAbi, functionName: "setApprovalForAll", args: [TO, true] })],
+    ];
+    for (const [name, data] of cases) {
+      const { warnings, effects } = decodeTokenEffects(tx({ to: TOKEN, data }));
+      expect(warnings.some((w) => w.code === "UNLIMITED_APPROVE"), name).toBe(true);
+      expect(effects[0]?.kind, name).toBe("approve");
+      const r = await simulateTx(tx({ to: TOKEN, data }), stub({}));
+      expect(r.ok, name).toBe(false);
+      expect(r.blockReason, name).toBe("UnlimitedApprove");
+      expect(toActionBlocked(r, PLAN)?.reason, name).toBe("UnlimitedApprove");
+    }
+  });
+
+  it("does not flag a finite increaseAllowance, a finite permit, DAI allowed=false or setApprovalForAll(false)", async () => {
+    const finite = [
+      encodeFunctionData({ abi: incAbi, functionName: "increaseAllowance", args: [TO, 10n] }),
+      encodeFunctionData({ abi: permit2612Abi, functionName: "permit", args: [FROM, TO, 10n, 1n, 27, Z32, Z32] }),
+      encodeFunctionData({ abi: permitDaiAbi, functionName: "permit", args: [FROM, TO, 0n, 1n, false, 27, Z32, Z32] }),
+      encodeFunctionData({ abi: setAllAbi, functionName: "setApprovalForAll", args: [TO, false] }),
+    ];
+    for (const data of finite) {
+      const { warnings } = decodeTokenEffects(tx({ to: TOKEN, data }));
+      expect(warnings.some((w) => w.code === "UNLIMITED_APPROVE")).toBe(false);
+      const r = await simulateTx(tx({ to: TOKEN, data }), stub({}));
+      expect(r.ok).toBe(true);
+    }
+  });
+
+  it("blocks truncated or malformed calldata with an approval selector", async () => {
+    expect(APPROVAL_SELECTORS.size).toBe(5); // approve, increaseAllowance, 2 permits, setApprovalForAll
+    for (const sel of APPROVAL_SELECTORS) {
+      const truncated = (sel + "00") as Hex; // selector + 1 byte, not enough args
+      const { warnings } = decodeTokenEffects(tx({ to: TOKEN, data: truncated }));
+      expect(warnings[0]?.code, sel).toBe("MALFORMED_APPROVAL");
+      const r = await simulateTx(tx({ to: TOKEN, data: truncated }), stub({}));
+      expect(r.ok, sel).toBe(false);
+      expect(r.blockReason, sel).toBe("MalformedApproval");
+      expect(toActionBlocked(r, PLAN)?.reason, sel).toBe("MalformedApproval");
+    }
+  });
+});
+
+describe("RPC errors, balance and planId", () => {
+  it("marks an RPC timeout or HTTP error as SimUnavailable, not SimRevert", async () => {
+    const timeout = await simulateTx(tx(), stub({ callThrow: { name: "TimeoutError", message: "request timed out" } }));
+    expect(timeout.ok).toBe(false);
+    expect(timeout.blockReason).toBe("SimUnavailable");
+    expect(toActionBlocked(timeout, PLAN)?.reason).toBe("SimUnavailable");
+    const http = await simulateTx(tx(), stub({ callThrow: { name: "HttpRequestError", message: "HTTP 503" } }));
+    expect(toActionBlocked(http, PLAN)?.reason).toBe("SimUnavailable");
+    const reverted = await simulateTx(tx(), stub({ callThrow: { message: "execution reverted: cap" } }));
+    expect(toActionBlocked(reverted, PLAN)?.reason).toBe("SimRevert");
+  });
+
+  it("blocks when getBalance fails, or when the balance is below value+fee", async () => {
+    const fail = await simulateTx(tx({ value: 1n }), stub({ balanceThrow: new Error("rpc down") }));
+    expect(fail.ok).toBe(false);
+    expect(fail.blockReason).toBe("SimUnavailable");
+    expect(toActionBlocked(fail, PLAN)?.reason).toBe("SimUnavailable");
+    const short = await simulateTx(tx({ value: 100n }), stub({ estimateGas: 10n, getGasPrice: 2n, getBalance: 100n }));
+    // needed = 100 + 20 = 120 > 100
+    expect(short.ok).toBe(false);
+    expect(short.blockReason).toBe("InsufficientBalance");
+    expect(toActionBlocked(short, PLAN)?.reason).toBe("InsufficientBalance");
+  });
+
+  it("does not hide a failed simulation when planId is missing: event is MissingPlanId", async () => {
+    const r = await simulateTx(tx(), stub({ callThrow: { message: "execution reverted" } }));
+    expect(toActionBlocked(r, undefined)?.reason).toBe("MissingPlanId");
+    expect(toActionBlocked(r, "0xzz")?.reason).toBe("MissingPlanId");
+    expect(toActionBlocked(r, PLAN)?.reason).toBe("SimRevert");
+    const ok = await simulateTx(tx(), stub({}));
+    expect(toActionBlocked(ok, undefined)).toBeNull();
+  });
+});
+
+describe("checkSimulateApiInput", () => {
+  const base = { chainId: 10143, from: FROM, to: TO };
+  it("rejects data that is not valid 0x hex and invalid value (parseCount)", () => {
+    const badData = checkSimulateApiInput({ ...base, data: "ffff" });
+    expect(badData.ok).toBe(false);
+    if (!badData.ok) {
+      expect(badData.error).toMatch(/hex/);
+      expect(badData.status).toBe(400);
+    }
+    expect(checkSimulateApiInput({ ...base, data: "0xzz" }).ok).toBe(false);
+    const badVal = checkSimulateApiInput({ ...base, value: "abc" });
+    expect(badVal.ok).toBe(false);
+    if (!badVal.ok) expect(badVal.status).toBe(400);
+    const ok = checkSimulateApiInput({ ...base, data: "0x", value: "10", planId: PLAN });
+    expect(ok.ok).toBe(true);
+    if (ok.ok) {
+      expect(ok.tx.value).toBe(10n);
+      expect(ok.planIdMissing).toBe(false);
+    }
+    const noPlan = checkSimulateApiInput({ ...base });
+    expect(noPlan.ok).toBe(true);
+    if (noPlan.ok) expect(noPlan.planIdMissing).toBe(true);
+    expect(checkSimulateApiInput({ ...base, planId: "0x12" }).ok).toBe(false);
   });
 });
