@@ -2,6 +2,7 @@ import type { Address, Hex } from "viem";
 import { planHash, type ExecutorPlan } from "./planHash";
 import type { QueueEvent } from "./events";
 import { asAmount, asFiniteNumber, lowerAddress, lowerPlanId } from "./guards";
+import { cappedNumber, isConfigObject } from "./limits";
 
 /**
  * Offline verification of a planHash and of QueueEvent receipts.
@@ -9,6 +10,8 @@ import { asAmount, asFiniteNumber, lowerAddress, lowerPlanId } from "./guards";
  */
 
 export const VERIFY_DEFAULTS = { maxEvents: 10_000 } as const;
+/** Hard caps: maxEvents and CLI JSON size. Above max -> FAIL/BadConfig, never silently accepted. */
+export const VERIFY_MAX = { maxEvents: 10_000, jsonBytes: 16 * 1024 } as const;
 
 export type CheckResult = { name: string; ok: boolean; reason?: string };
 
@@ -98,6 +101,17 @@ export function verifyOffline(input: unknown): VerifyReport {
   }
   const o = input as Record<string, unknown>;
 
+  if (o.config !== undefined && o.config !== null && !isConfigObject(o.config)) {
+    fail(checks, "config", "config non valida");
+    return { ok: false, checks };
+  }
+  const cap = cappedNumber((o.config as { maxEvents?: unknown } | null | undefined)?.maxEvents, VERIFY_DEFAULTS.maxEvents, VERIFY_MAX.maxEvents);
+  if (!cap.ok) {
+    fail(checks, "config.maxEvents", cap.detail);
+    return { ok: false, checks };
+  }
+  const maxEvents = cap.value;
+
   // --- planHash ---
   const planRaw = o.plan ?? (o.account !== undefined ? o : undefined);
   const hasPlan = planRaw !== undefined;
@@ -157,8 +171,8 @@ export function verifyOffline(input: unknown): VerifyReport {
     fail(checks, "events", "events/receipts deve essere una lista");
     return { ok: false, checks, computedPlanHash: computed, claimedPlanHash: claimed };
   }
-  if (rawEvents.length > VERIFY_DEFAULTS.maxEvents) {
-    fail(checks, "events", `troppi eventi (${rawEvents.length} > ${VERIFY_DEFAULTS.maxEvents})`);
+  if (rawEvents.length > maxEvents) {
+    fail(checks, "events", `troppi eventi (${rawEvents.length} > ${maxEvents})`);
     return { ok: false, checks, computedPlanHash: computed, claimedPlanHash: claimed };
   }
 

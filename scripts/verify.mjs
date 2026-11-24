@@ -11,7 +11,7 @@ import { readFileSync } from "node:fs";
 
 register(new URL("./resolve-ts.mjs", import.meta.url));
 
-const { verifyOffline, formatReport } = await import("../packages/core/src/verifyOffline.ts");
+const { verifyOffline, formatReport, VERIFY_MAX } = await import("../packages/core/src/verifyOffline.ts");
 
 const usage = () => {
   process.stderr.write(
@@ -21,9 +21,13 @@ const usage = () => {
 };
 
 const load = (file) => {
-  const raw = readFileSync(file, "utf8");
+  const buf = readFileSync(file);
+  if (buf.byteLength > VERIFY_MAX.jsonBytes) {
+    process.stdout.write(`FAIL input: file oltre il massimo (${buf.byteLength} > ${VERIFY_MAX.jsonBytes} byte)\nRESULT FAIL\n`);
+    process.exit(1);
+  }
   try {
-    return JSON.parse(raw);
+    return JSON.parse(buf.toString("utf8"));
   } catch {
     process.stdout.write("FAIL input: JSON non valido\nRESULT FAIL\n");
     process.exit(1);

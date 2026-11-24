@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { MONAD_TESTNET } from "../src/chains";
 import { planHash } from "../src/planHash";
-import { verifyOffline, formatReport, parseJsonAmount } from "../src/verifyOffline";
+import { verifyOffline, formatReport, parseJsonAmount, VERIFY_DEFAULTS, VERIFY_MAX } from "../src/verifyOffline";
 import { VECTOR } from "./fixtures";
 import { spawnSync } from "node:child_process";
 import { fileURLToPath } from "node:url";
@@ -159,6 +159,29 @@ describe("verifyOffline receipts", () => {
   });
 });
 
+describe("verifyOffline config caps", () => {
+  it("uses the default maxEvents when config or the field is null, and rejects a value above the fixed max", () => {
+    const base = { ...planJson, events: happyEvents };
+    expect(verifyOffline({ ...base, config: null }).ok).toBe(true);
+    expect(verifyOffline({ ...base, config: { maxEvents: null } }).ok).toBe(true);
+    expect(verifyOffline({ ...base, config: { maxEvents: 1 } }).ok).toBe(false); // 3 events > 1, but 1 is <= max so the cap itself is ok; fail is troppi eventi
+    const over = verifyOffline({ ...base, config: { maxEvents: VERIFY_MAX.maxEvents + 1 } });
+    expect(over.ok).toBe(false);
+    expect(over.checks.some((c) => c.name === "config.maxEvents" && c.reason?.includes("massimo"))).toBe(true);
+    for (const config of ["x", 1, []] as const) {
+      expect(verifyOffline({ ...base, config: config as never }).ok, String(config)).toBe(false);
+    }
+  });
+
+  it("fails when the event list exceeds the (default) max, without silently truncating", () => {
+    const ev0 = ev();
+    const tooMany = Array.from({ length: VERIFY_DEFAULTS.maxEvents + 1 }, (_, i) => ev0);
+    const r = verifyOffline({ ...planJson, events: tooMany });
+    expect(r.ok).toBe(false);
+    expect(r.checks.some((c) => c.name === "events" && c.reason?.includes("troppi"))).toBe(true);
+  });
+});
+
 describe("scripts/verify.mjs CLI", () => {
   const script = fileURLToPath(new URL("../../../scripts/verify.mjs", import.meta.url));
   const dir = mkdtempSync(path.join(tmpdir(), "verify-offline-"));
@@ -176,5 +199,14 @@ describe("scripts/verify.mjs CLI", () => {
     expect(bad.status, bad.stderr + bad.stdout).toBe(1);
     expect(bad.stdout).toMatch(/FAIL planHash/);
     expect(bad.stdout).toMatch(/RESULT FAIL/);
+  });
+
+  it("exits 1 when the JSON file is larger than VERIFY_MAX.jsonBytes", () => {
+    const bigPath = path.join(dir, "big.json");
+    writeFileSync(bigPath, "{" + " ".repeat(VERIFY_MAX.jsonBytes) + "}");
+    const big = spawnSync(process.execPath, ["--experimental-strip-types", script, bigPath], { encoding: "utf8" });
+    expect(big.status, big.stderr + big.stdout).toBe(1);
+    expect(big.stdout).toMatch(/oltre il massimo/);
+    expect(big.stdout).toMatch(/RESULT FAIL/);
   });
 });

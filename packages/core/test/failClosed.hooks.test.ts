@@ -3,6 +3,9 @@ import { maxUint256, type Address, type Hex } from "viem";
 import { simulateTx, SIM_DEFAULTS, type SimClient, type SimOptions, type ProposedTx } from "../src/simulate";
 import { checkCounterparty, COUNTERPARTY_DEFAULTS, type CodeClient } from "../src/counterparty";
 import { probeNetworks, PROBE_MAX, type JsonRpc, type ProbeNetwork } from "../src/probe";
+import { verifyOffline, VERIFY_MAX } from "../src/verifyOffline";
+import { VECTOR } from "./fixtures";
+import { MONAD_TESTNET } from "../src/chains";
 import { redactWithConfig } from "../src/redact";
 
 const FROM = "0xd2FE6a3Ae252D6fb2f604805898177c8FdaAa24B" as Address;
@@ -121,4 +124,39 @@ describeFailClosed({
   valid: () => ({}),
   run: async () => ({}),
   isBlocked: () => true,
+});
+
+type VerifyIn = {
+  plan?: unknown;
+  chainId?: unknown;
+  executor?: unknown;
+  planHash?: unknown;
+  events?: unknown;
+  config?: { maxEvents?: unknown };
+};
+
+describeFailClosed<VerifyIn, ReturnType<typeof verifyOffline>>({
+  name: "verifyOffline",
+  valid: () => ({
+    plan: {
+      account: VECTOR.plan.account,
+      amountIn: "1000000",
+      swapAmount: "500000",
+      minAmountOut: "123456789",
+      unwrap: true,
+      nonce: "7",
+      deadline: "1800000000",
+    },
+    chainId: MONAD_TESTNET.id,
+    executor: MONAD_TESTNET.planExecutor,
+    planHash: VECTOR.expected,
+    events: [{
+      kind: "queued", planId: VECTOR.expected, reason: "", amount: "1000000",
+      ts: "2026-11-24T06:00:00.000Z", id: "q1",
+    }],
+  }),
+  run: (input) => verifyOffline(input),
+  isBlocked: (r) => r.ok === false,
+  configs: ["config"],
+  limits: [{ path: "config.maxEvents", widen: VERIFY_MAX.maxEvents + 1 }],
 });
