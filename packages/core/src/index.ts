@@ -7,5 +7,6 @@ export * from "./planner";
 export * from "./schema";
 export * from "./webauthn";
 export * from "./describe";
+export * from "./events";
 export * from "./approvalQueue";
 export * from "./budgetTree";
