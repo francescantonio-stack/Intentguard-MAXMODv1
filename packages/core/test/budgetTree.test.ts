@@ -1,39 +1,46 @@
 import { describe, expect, it } from "vitest";
-import { BudgetTree, type BudgetEvent } from "../src/budgetTree";
+import { BudgetTree, BudgetTreeBlocked, type BudgetConfigEvent } from "../src/budgetTree";
+import type { QueueEvent } from "../src/approvalQueue";
 
 const U = 1_000_000n; // 1 USDC
+const DAY = 86_400_000;
+const P = (n: number) => (`0x${n.toString(16).padStart(64, "0")}`) as `0x${string}`;
+let pc = 0;
+const np = () => P(++pc);
 function setup(cap = 10n * U) {
   let t = 1_800_000_000_000;
-  const events: BudgetEvent[] = [];
-  const b = new BudgetTree("user", "USDC", cap, { now: () => t, onEvent: (e) => events.push(e) });
-  return { b, events, tick: (ms: number) => (t += ms) };
+  const events: QueueEvent[] = [];
+  const cfgEv: BudgetConfigEvent[] = [];
+  const b = new BudgetTree("user", "USDC", cap, { now: () => t, onEvent: (e) => events.push(e), onConfig: (e) => cfgEv.push(e) });
+  return { b, events, cfgEv, tick: (ms: number) => (t += ms), set: (v: number) => (t = v) };
 }
+const reasonOf = (fn: () => unknown) => { try { fn(); } catch (e) { return (e as BudgetTreeBlocked).reason ?? (e as Error).message; } return "no-throw"; };
 
 describe("BudgetTree", () => {
   it("children caps never exceed the parent", () => {
     const { b, events } = setup();
     b.allocate("user", "agentA", 6n * U);
     b.allocate("user", "agentB", 4n * U);
-    expect(() => b.allocate("user", "agentC", 1n)).toThrow(/exceed parent/);
-    expect(events.at(-1)!.kind).toBe("blocked");
+    expect(reasonOf(() => b.allocate("user", "agentC", 1n))).toBe("OverParentCap");
+    expect(events.at(-1)).toMatchObject({ kind: "blocked", reason: "OverParentCap", id: "agentC", amount: 1n });
   });
 
   it("a child cannot spend over its own cap in 24 h", () => {
     const { b } = setup();
     b.allocate("user", "agentA", 3n * U);
-    b.spend("agentA", "USDC", 2n * U);
-    expect(b.canSpend("agentA", "USDC", 2n * U).ok).toBe(false);
-    expect(() => b.spend("agentA", "USDC", 2n * U)).toThrow(/over 24h budget/);
-    b.spend("agentA", "USDC", 1n * U);
+    b.spend("agentA", "USDC", 2n * U, np());
+    expect(b.canSpend("agentA", "USDC", 2n * U, np())).toEqual({ ok: false, reason: "OverBudget" });
+    expect(reasonOf(() => b.spend("agentA", "USDC", 2n * U, np()))).toBe("OverBudget");
+    b.spend("agentA", "USDC", 1n * U, np());
     expect(b.available("agentA")).toBe(0n);
   });
 
   it("the 24 h window rolls for children too", () => {
     const { b, tick } = setup();
     b.allocate("user", "agentA", 3n * U);
-    b.spend("agentA", "USDC", 3n * U);
-    tick(86_399_999);
-    expect(b.canSpend("agentA", "USDC", 1n).ok).toBe(false);
+    b.spend("agentA", "USDC", 3n * U, np());
+    tick(DAY - 1);
+    expect(b.canSpend("agentA", "USDC", 1n, np()).ok).toBe(false);
     tick(2);
     expect(b.available("agentA")).toBe(3n * U);
   });
@@ -42,81 +49,140 @@ describe("BudgetTree", () => {
     const { b } = setup();
     b.allocate("user", "agentA", 7n * U);
     expect(b.available("user")).toBe(3n * U);
-    expect(() => b.spend("user", "USDC", 4n * U)).toThrow(/over 24h/);
-    b.spend("user", "USDC", 3n * U);
-    // the child's reserve is intact
+    expect(reasonOf(() => b.spend("user", "USDC", 4n * U, np()))).toBe("OverBudget");
+    b.spend("user", "USDC", 3n * U, np());
     expect(b.available("agentA")).toBe(7n * U);
-  });
-
-  it("sum of all spending under the parent never exceeds the parent cap", () => {
-    const { b } = setup();
-    b.allocate("user", "a", 5n * U);
-    b.allocate("user", "b", 5n * U);
-    b.spend("a", "USDC", 5n * U);
-    b.spend("b", "USDC", 5n * U);
-    expect(b.spentInWindow("user")).toBe(10n * U);
-    expect(b.canSpend("user", "USDC", 1n).ok).toBe(false);
   });
 
   it("nested levels: grandchild limited by every ancestor", () => {
     const { b } = setup();
     b.allocate("user", "team", 4n * U);
     b.allocate("team", "bot1", 3n * U);
-    expect(() => b.allocate("team", "bot2", 2n * U)).toThrow(/exceed parent/);
-    b.spend("bot1", "USDC", 3n * U);
+    expect(reasonOf(() => b.allocate("team", "bot2", 2n * U))).toBe("OverParentCap");
+    b.spend("bot1", "USDC", 3n * U, np());
     expect(b.available("team")).toBe(1n * U);
     expect(b.spentInWindow("user")).toBe(3n * U);
   });
 
-  it("resize: growing must fit the parent, shrinking must cover grandchildren", () => {
-    const { b } = setup();
+  it("remove + re-allocate the same id gets its history back (Primo's case)", () => {
+    const { b } = setup(10n * U);
+    b.allocate("user", "a", 5n * U);
+    b.allocate("user", "b", 5n * U);
+    b.spend("a", "USDC", 5n * U, np());
+    b.remove("a");
+    expect(b.spentInWindow("user")).toBe(5n * U); // orphan spends still in the ancestor
+    expect(b.available("user")).toBe(0n);         // not as parent's free money
+    b.allocate("user", "a", 5n * U);
+    expect(b.available("a")).toBe(0n);
+    expect(b.available("b")).toBe(5n * U);        // sibling slot intact
+    expect(b.spentInWindow("a")).toBe(5n * U);
+  });
+
+  it("removed id cannot come back under another parent inside the window", () => {
+    const { b, tick } = setup();
+    b.allocate("user", "team", 4n * U);
+    b.allocate("user", "a", 2n * U);
+    b.spend("a", "USDC", 1n, np());
+    b.remove("a");
+    expect(reasonOf(() => b.allocate("team", "a", 1n * U))).toBe("IdReusedElsewhere");
+    tick(DAY + 1);
+    b.allocate("team", "a", 1n * U);
+    expect(b.available("a")).toBe(1n * U);
+  });
+
+  it("orphan spends block new allocations until they leave the window", () => {
+    const { b, tick } = setup(10n * U);
+    b.allocate("user", "a", 6n * U);
+    b.spend("a", "USDC", 6n * U, np());
+    b.remove("a");
+    expect(reasonOf(() => b.allocate("user", "x", 5n * U))).toBe("OverParentCap");
+    b.allocate("user", "x", 4n * U);
+    tick(DAY + 1);
+    b.allocate("user", "y", 6n * U);
+  });
+
+  it("allocate and grow take the parent's own spends into account", () => {
+    const { b } = setup(10n * U);
+    b.spend("user", "USDC", 6n * U, np());
+    expect(reasonOf(() => b.allocate("user", "a", 5n * U))).toBe("OverParentCap");
+    b.allocate("user", "a", 4n * U);
+    expect(reasonOf(() => b.resize("a", 5n * U))).toBe("OverParentCap");
+  });
+
+  it("resize rules and invalid caps emit blocked", () => {
+    const { b, events } = setup();
     b.allocate("user", "a", 4n * U);
     b.allocate("user", "b", 6n * U);
-    expect(() => b.resize("a", 5n * U)).toThrow(/exceed parent/);
+    expect(reasonOf(() => b.resize("a", 5n * U))).toBe("OverParentCap");
     b.resize("b", 5n * U);
     b.resize("a", 5n * U);
     b.allocate("a", "a1", 2n * U);
-    expect(() => b.resize("a", 1n * U)).toThrow(/children reserve/);
+    expect(reasonOf(() => b.resize("a", 1n * U))).toBe("BelowChildrenReserve");
+    expect(reasonOf(() => b.resize("a", -1n))).toBe("BadCap");
+    expect(reasonOf(() => b.allocate("user", "z", 1 as unknown as bigint))).toBe("BadCap");
+    expect(events.filter((e) => e.kind === "blocked").map((e) => e.reason)).toEqual(["OverParentCap", "BelowChildrenReserve", "BadCap", "BadCap"]);
   });
 
   it("shrinking below what was already spent blocks further spending", () => {
     const { b } = setup();
     b.allocate("user", "a", 5n * U);
-    b.spend("a", "USDC", 4n * U);
-    b.resize("a", 2n * U);
+    b.spend("a", "USDC", 4n * U, np());
+    b.resize("a", 4n * U);
     expect(b.available("a")).toBe(0n);
+    expect(reasonOf(() => b.resize("a", 3n * U))).toBe("BelowChildrenReserve");
   });
 
-  it("remove + re-allocate does not reset the 24 h limit", () => {
-    const { b } = setup(5n * U);
+  it("clock not finite or going backwards -> BadNow, nothing written", () => {
+    const { b, events, set, tick } = setup();
     b.allocate("user", "a", 5n * U);
-    b.spend("a", "USDC", 5n * U);
-    b.remove("a");
-    b.allocate("user", "a", 5n * U);
-    expect(b.available("a")).toBe(0n);
-    expect(b.canSpend("a", "USDC", 1n).ok).toBe(false);
+    b.spend("a", "USDC", 1n, np());
+    tick(-1);
+    expect(reasonOf(() => b.spend("a", "USDC", 1n, np()))).toBe("BadNow");
+    expect(b.canSpend("a", "USDC", 1n, np())).toEqual({ ok: false, reason: "BadNow" });
+    set(Number.NaN);
+    expect(reasonOf(() => b.spend("a", "USDC", 1n, np()))).toBe("BadNow");
+    expect(reasonOf(() => b.allocate("user", "c", 1n))).toBe("BadNow");
+    expect(events.filter((e) => e.kind === "consumed")).toHaveLength(1);
+    set(1_800_000_000_000 + 10);
+    expect(b.spentInWindow("a")).toBe(1n);
   });
 
-  it("fail-closed on bad input", () => {
-    const { b } = setup();
-    b.allocate("user", "a", 2n * U);
-    expect(b.canSpend("a", "USDC", 0n).ok).toBe(false);
-    expect(b.canSpend("a", "USDC", -1n).ok).toBe(false);
-    expect(b.canSpend("a", "USDC", Number.NaN as unknown as bigint).ok).toBe(false);
-    expect(b.canSpend("a", "USDC", 1 as unknown as bigint).ok).toBe(false);
-    expect(b.canSpend("a", "WMON", 1n).ok).toBe(false);
-    expect(b.canSpend("ghost", "USDC", 1n).ok).toBe(false);
-    expect(() => b.allocate("user", "a", 1n)).toThrow(/duplicate/);
-    expect(() => b.allocate("user", "x", -1n)).toThrow(/non-negative/);
-    expect(() => b.remove("user")).toThrow(/root/);
-    expect(() => new BudgetTree("u", "USDC", 1n, { windowMs: Number.NaN })).toThrow(/windowMs/);
-  });
-
-  it("blocked spends are logged and not recorded", () => {
+  it("events are QueueEvent: planId, node in id, reason string, amount bigint", () => {
     const { b, events } = setup();
     b.allocate("user", "a", 1n * U);
-    expect(() => b.spend("a", "USDC", 2n * U)).toThrow();
-    expect(events.at(-1)).toMatchObject({ kind: "blocked", node: "a", amount: "2000000" });
-    expect(b.spentInWindow("a")).toBe(0n);
+    const plan = `0x${"AB".repeat(32)}`;
+    b.spend("a", "usdc", 1n, plan);
+    expect(events.at(-1)).toEqual({ kind: "consumed", planId: plan.toLowerCase(), reason: "", amount: 1n, ts: expect.any(String), id: "a" });
+    expect(reasonOf(() => b.spend("a", "USDC", 2n * U, plan))).toBe("OverBudget");
+    expect(events.at(-1)).toMatchObject({ kind: "blocked", planId: plan.toLowerCase(), reason: "OverBudget", amount: 2n * U, id: "a" });
+    expect(typeof events.at(-1)!.amount).toBe("bigint");
+  });
+
+  it("fail-closed on bad input; token case-insensitive", () => {
+    const { b } = setup();
+    b.allocate("user", "a", 2n * U);
+    const ok = np();
+    expect(b.canSpend("a", "usdc", 1n, ok).ok).toBe(true);
+    expect(b.canSpend("a", "USDC", 0n, ok).reason).toBe("BadAmount");
+    expect(b.canSpend("a", "USDC", -1n, ok).reason).toBe("BadAmount");
+    expect(b.canSpend("a", "USDC", Number.NaN as unknown as bigint, ok).reason).toBe("BadAmount");
+    expect(b.canSpend("a", "WMON", 1n, ok).reason).toBe("WrongToken");
+    expect(b.canSpend("ghost", "USDC", 1n, ok).reason).toBe("UnknownBudget");
+    expect(b.canSpend("a", "USDC", 1n, "0x12").reason).toBe("BadPlanId");
+    expect(reasonOf(() => b.allocate("user", "a", 1n))).toBe("DuplicateId");
+    expect(reasonOf(() => b.allocate("ghost", "q", 1n))).toBe("UnknownBudget");
+    expect(() => b.remove("user")).toThrow(/root/);
+    expect(() => new BudgetTree("u", "USDC", 1n, { windowMs: Number.NaN })).toThrow(/windowMs/);
+    expect(() => new BudgetTree("u", "USDC", 1n, { windowMs: Infinity })).toThrow(/windowMs/);
+    expect(() => new BudgetTree("u", "", 1n)).toThrow(/token/);
+  });
+
+  it("old spends are pruned from memory", () => {
+    const { b, tick } = setup();
+    b.allocate("user", "a", 5n * U);
+    for (let i = 0; i < 5; i++) b.spend("a", "USDC", 1n, np());
+    tick(DAY + 1);
+    expect(b.spentInWindow("user")).toBe(0n);
+    expect((b as unknown as { nodes: Map<string, { spends: unknown[] }> }).nodes.get("a")!.spends).toHaveLength(0);
   });
 });
