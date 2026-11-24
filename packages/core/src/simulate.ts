@@ -446,8 +446,16 @@ export function checkSimulateApiInput(body: unknown):
   }
   const t = body as Record<string, unknown>;
   if (t.data !== undefined && t.data !== null && t.data !== "") {
-    if (typeof t.data !== "string" || !/^0x[0-9a-fA-F]*$/.test(t.data) || t.data.length % 2 !== 0) {
+    if (typeof t.data !== "string" || !/^0x[0-9a-fA-F]*$/.test(t.data)) {
       return { ok: false, status: 400, error: "data must be 0x hex" };
+    }
+    // Odd length with a sensitive approval selector goes through to parseTx/decodeApproval (MalformedApproval).
+    // Unknown odd hex stays 400 (fail-closed).
+    if (t.data.length % 2 !== 0) {
+      const sel = evmSelector(t.data);
+      if (!sel || !SENSITIVE_SELECTORS[sel]) {
+        return { ok: false, status: 400, error: "data must be 0x hex" };
+      }
     }
   }
   const value = t.value === undefined || t.value === "" ? 0n : undefined;

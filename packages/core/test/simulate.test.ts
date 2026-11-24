@@ -414,4 +414,23 @@ describe("checkSimulateApiInput", () => {
     if (noPlan.ok) expect(noPlan.planIdMissing).toBe(true);
     expect(checkSimulateApiInput({ ...base, planId: "0x12" }).ok).toBe(false);
   });
+
+  it("lets odd-length approval calldata through so /api/simulate can emit MalformedApproval; unknown odd hex is still 400", async () => {
+    for (const sel of APPROVAL_SELECTORS) {
+      const odd = sel + "a";
+      const parsed = checkSimulateApiInput({ ...base, to: TOKEN, data: odd, planId: PLAN });
+      expect(parsed.ok, sel).toBe(true);
+      if (!parsed.ok) continue;
+      const sim = await simulateTx(parsed.tx, stub({}));
+      expect(sim.ok, sel).toBe(false);
+      expect(sim.blockReason, sel).toBe("MalformedApproval");
+      expect(toActionBlocked(sim, parsed.planId)?.reason, sel).toBe("MalformedApproval");
+    }
+    const unknown = checkSimulateApiInput({ ...base, data: "0xdeadbeefa" });
+    expect(unknown.ok).toBe(false);
+    if (!unknown.ok) {
+      expect(unknown.status).toBe(400);
+      expect(unknown.error).toMatch(/hex/);
+    }
+  });
 });
