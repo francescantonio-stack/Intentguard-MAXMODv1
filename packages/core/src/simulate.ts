@@ -7,7 +7,7 @@ import { redactSecrets } from "./redact";
 import type { QueueEvent } from "./events";
 import { blockedEvent, normalizeAddress, lowerPlanId } from "./guards";
 import { isConfigObject, tightenBigint } from "./limits";
-import { decodeApproval } from "./approvals";
+import { decodeApproval, evmSelector, SENSITIVE_SELECTORS } from "./approvals";
 
 /**
  * Pre-sign simulation (idea: MonadLens). READ-ONLY: eth_call + eth_estimateGas + eth_getBalance.
@@ -219,8 +219,16 @@ function parseTx(tx: unknown): { ok: true; value: ProposedTx } | { ok: false; re
   if (!value.ok) return value;
   if (value.value < 0n) return { ok: false, reason: "BAD_VALUE: value negativo" };
   const data = t.data === undefined || t.data === "" ? "0x" : t.data;
-  if (typeof data !== "string" || !/^0x[0-9a-fA-F]*$/.test(data) || data.length % 2 !== 0) {
+  if (typeof data !== "string" || !/^0x[0-9a-fA-F]*$/.test(data)) {
     return { ok: false, reason: "BAD_VALUE: data non è un hex valido" };
+  }
+  // Odd length: let a sensitive approval selector through so decodeApproval can return MalformedApproval.
+  // Unknown odd hex stays invalid (fail-closed).
+  if (data.length % 2 !== 0) {
+    const sel = evmSelector(data);
+    if (!sel || !SENSITIVE_SELECTORS[sel]) {
+      return { ok: false, reason: "BAD_VALUE: data non è un hex valido" };
+    }
   }
   return { ok: true, value: { chainId: Number(chain.value), from: from.value, to: to.value, data: data as Hex, value: value.value } };
 }
@@ -438,8 +446,16 @@ export function checkSimulateApiInput(body: unknown):
   }
   const t = body as Record<string, unknown>;
   if (t.data !== undefined && t.data !== null && t.data !== "") {
-    if (typeof t.data !== "string" || !/^0x[0-9a-fA-F]*$/.test(t.data) || t.data.length % 2 !== 0) {
+    if (typeof t.data !== "string" || !/^0x[0-9a-fA-F]*$/.test(t.data)) {
       return { ok: false, status: 400, error: "data must be 0x hex" };
+    }
+    // Odd length with a sensitive approval selector goes through to parseTx/decodeApproval (MalformedApproval).
+    // Unknown odd hex stays 400 (fail-closed).
+    if (t.data.length % 2 !== 0) {
+      const sel = evmSelector(t.data);
+      if (!sel || !SENSITIVE_SELECTORS[sel]) {
+        return { ok: false, status: 400, error: "data must be 0x hex" };
+      }
     }
   }
   const value = t.value === undefined || t.value === "" ? 0n : undefined;
