@@ -14,7 +14,24 @@ Checks the `tools/list` reply of an MCP server **before** the agent may use it. 
 
 ## What is checked
 
-- Every string in the whole tool object, after NFKC and basic look-alike folding, with any whitespace between words:
-  hidden instructions, invisible/bidi characters, long encoded strings, and short base64 decoded and scanned again.
-- Tool names (snake_case, camelCase, kebab-case) that suggest shell, signing or fund movement; top-level params asking for secrets.
+- Every string in the whole tool object, after ONE normalization (NFKD, unusual spaces such as U+3164 -> space,
+  combining marks and format chars removed, look-alikes folded: Cyrillic, Greek, Armenian, Cherokee, Latin small capitals;
+  fullwidth and math letters via NFKD), with any whitespace between words:
+  hidden instructions (English, Italian, Spanish, French, German; Chinese checked with all whitespace removed),
+  invisible/bidi/filler characters, long encoded strings.
+- Encoded text is decoded and scanned again: `%xx`, hex (also `\xNN`), base64 up to 3 levels, rot13.
+  Bounded (64 variants, 256 KB decoded); over the budget -> `ENCODED_BLOB` (BLOCK).
+- Tool names (snake_case, camelCase, kebab-case, after normalization) that suggest shell, signing or fund movement.
+- Parameter names at any depth (properties, items, prefixItems, anyOf/oneOf/allOf, $defs/definitions,
+  additionalProperties, patternProperties, not/if/then/else); deeper than 32 levels -> `MALFORMED`.
+- Duplicate names after normalization (`get_balance`, `Get_balance`, Cyrillic `а`) -> `DUPLICATE_TOOL` (BLOCK).
+- Baseline names are matched after normalization: a look-alike rename is `TOOL_CHANGED`. If in the same scan a pinned
+  tool disappears and a new one appears, it is treated as a rename: `TOOL_CHANGED` (BLOCK).
 - Bad config (values must be finite and > 0) or malformed pins: `BAD_CONFIG`. Malformed input: `MALFORMED`. Both block.
+
+## Limits (read this)
+
+The phrase filter (hidden instructions, languages, decoding) is **heuristic and will never be complete**:
+a new wording, language or encoding can pass it. The real protection is the **pin + `TOOL_CHANGED`**:
+any change to a pinned tool, rename included, gives `BLOCK`, and a human must review it before re-pinning.
+
