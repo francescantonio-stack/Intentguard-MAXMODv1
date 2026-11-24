@@ -33,7 +33,7 @@ describe("decodeApproval (shared, Moon-compatible selectors)", () => {
     const permitMax = encodeFunctionData({ abi: p2612, functionName: "permit", args: [FROM, TO, maxUint256, 1n, 27, Z32, Z32] });
     const daiYes = encodeFunctionData({ abi: pDai, functionName: "permit", args: [FROM, TO, 0n, 1n, true, 27, Z32, Z32] });
     const setYes = encodeFunctionData({ abi: setAll, functionName: "setApprovalForAll", args: [TO, true] });
-    expect(decodeApproval(approveMax)).toMatchObject({ kind: "approve", method: "approve", unlimited: true, malformed: false });
+    expect(decodeApproval(approveMax)).toMatchObject({ kind: "approve", method: "approve", unlimited: true, malformed: false, reason: "UnlimitedApprove" });
     expect(decodeApproval(incMax)).toMatchObject({ kind: "increaseAllowance", unlimited: true, malformed: false });
     expect(decodeApproval(permitMax)).toMatchObject({ kind: "permit", style: "eip2612-permit", unlimited: true, malformed: false });
     expect(decodeApproval(daiYes)).toMatchObject({ kind: "permit", style: "dai-permit", allowed: true, unlimited: true, malformed: false });
@@ -64,9 +64,10 @@ describe("decodeApproval (shared, Moon-compatible selectors)", () => {
       expect(d.malformed, sel).toBe(true);
       expect(d.kind, sel).toBe(method);
       expect(d.unlimited, sel).toBe(false);
+      expect(d.reason, sel).toBe("MalformedApproval");
       expect(isTruncatedSensitive(truncated)).toEqual({ method });
     }
-    expect(decodeApproval("0xdeadbeef00000001")).toEqual({ unlimited: false, malformed: false });
+    expect(decodeApproval("0xdeadbeef00000001")).toEqual({ unlimited: false, malformed: false }); // unknown selector: no block
     expect(isTruncatedSensitive("0xdeadbeef00000001")).toBeUndefined();
     expect(isTruncatedSensitive("ffff")).toBeUndefined();
     expect(decodeApproval("0x")).toEqual({ unlimited: false, malformed: false });
