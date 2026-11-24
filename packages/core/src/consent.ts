@@ -1,7 +1,8 @@
-import { decodeFunctionData, getAddress, maxUint256, sha256, stringToHex, toHex, type Hex } from "viem";
+import { decodeFunctionData, getAddress, maxUint256, parseAbi, sha256, stringToHex, toHex, type Hex } from "viem";
 import { cctpAbi, erc20Abi, planExecutorAbi } from "./abi";
 import { BASE_SEPOLIA, MONAD_TESTNET } from "./chains";
 import type { Step } from "./planner";
+import type { QueueEvent } from "./events";
 
 /**
  * Explicit, fresh consent (Orvena idea) + plain-language explanation (PlainSign idea).
@@ -58,21 +59,86 @@ export function canonicalJson(v: unknown): string {
 
 // ---------- decoding ----------
 
-type Decoded = { method: string; args: Record<string, unknown> } | null;
+/** Valid calldata: 0x plus an even number of hex digits (including empty "0x"). */
+export const HEX_DATA_RE = /^0x(?:[0-9a-fA-F]{2})*$/;
+
+export function isValidHexData(data: unknown): data is Hex {
+  return typeof data === "string" && HEX_DATA_RE.test(data);
+}
+
+/** increaseAllowance / EIP-2612 permit / DAI permit / setApprovalForAll — not in the repo's erc20Abi. */
+const increaseAllowanceAbi = parseAbi([
+  "function increaseAllowance(address spender,uint256 addedValue) returns (bool)",
+]);
+const eip2612PermitAbi = parseAbi([
+  "function permit(address owner,address spender,uint256 value,uint256 deadline,uint8 v,bytes32 r,bytes32 s)",
+]);
+const daiPermitAbi = parseAbi([
+  "function permit(address holder,address spender,uint256 nonce,uint256 expiry,bool allowed,uint8 v,bytes32 r,bytes32 s)",
+]);
+const setApprovalForAllAbi = parseAbi([
+  "function setApprovalForAll(address operator,bool approved)",
+]);
+
+const EVM_ABIS = [erc20Abi, increaseAllowanceAbi, eip2612PermitAbi, daiPermitAbi, setApprovalForAllAbi, cctpAbi, planExecutorAbi];
+
+/** 4-byte selectors of approve / increaseAllowance / permit / setApprovalForAll. */
+export const SENSITIVE_SELECTORS: Record<string, "approve" | "increaseAllowance" | "permit" | "setApprovalForAll"> = {
+  "0x095ea7b3": "approve",
+  "0x39509351": "increaseAllowance",
+  "0xd505accf": "permit",
+  "0x8fcbaf0c": "permit",
+  "0xa22cb465": "setApprovalForAll",
+};
+
+export function evmSelector(data: string): string | undefined {
+  if (typeof data === "string" && /^0x[0-9a-fA-F]{8}/.test(data)) return data.slice(0, 10).toLowerCase();
+  return undefined;
+}
+
+type Decoded = { method: string; args: Record<string, unknown>; style?: "dai-permit" | "eip2612-permit" } | null;
 
 function decodeEvm(data?: Hex): Decoded {
   if (!data || data === "0x") return null;
-  for (const abi of [erc20Abi, cctpAbi, planExecutorAbi]) {
+  if (!isValidHexData(data)) return null;
+  for (const abi of EVM_ABIS) {
     try {
       const d = decodeFunctionData({ abi, data });
       const item = abi.find((x) => x.type === "function" && x.name === d.functionName) as { inputs: { name?: string }[] } | undefined;
       const args: Record<string, unknown> = {};
       (d.args ?? []).forEach((a, i) => (args[item?.inputs[i]?.name || `arg${i}`] = a));
-      return { method: d.functionName, args };
+      const style = abi === daiPermitAbi ? "dai-permit" as const : abi === eip2612PermitAbi ? "eip2612-permit" as const : undefined;
+      return { method: d.functionName, args, ...(style && { style }) };
     } catch { /* try next */ }
   }
   return null;
 }
+
+/** Calldata looks like approve/permit/setApprovalForAll but cannot be fully decoded (truncated or malformed). */
+export function isTruncatedSensitive(data: unknown): { method: string } | undefined {
+  if (typeof data !== "string" || !isValidHexData(data) || data === "0x") return undefined;
+  const sel = evmSelector(data);
+  const method = sel ? SENSITIVE_SELECTORS[sel] : undefined;
+  if (!method) return undefined;
+  if (decodeEvm(data as Hex)) return undefined;
+  return { method };
+}
+
+export function evmPayloadIssue(p: unknown): "MALFORMED: data" | "MALFORMED: value" | undefined {
+  if (!p || typeof p !== "object") return undefined;
+  const tx = p as TxPayload;
+  if (tx.kind !== "evm") return undefined;
+  if (asAmount((tx as { value?: unknown }).value) === undefined) return "MALFORMED: value";
+  const data = (tx as { data?: unknown }).data;
+  if (data !== undefined && data !== null && data !== "") {
+    if (!isValidHexData(data)) return "MALFORMED: data";
+  }
+  return undefined;
+}
+
+const TRUNCATED_WARNING = "ATTENZIONE: i dati sembrano un'autorizzazione (approve, permit o setApprovalForAll) incompleta o malformata. Non fidarti: controlla il testo esatto.";
+const BAD_DATA_WARNING = "ATTENZIONE: i dati della transazione non sono hex 0x valido. Non fidarti: controlla il testo esatto.";
+const BAD_VALUE_WARNING = "ATTENZIONE: il valore nativo della transazione non è un numero valido. Non fidarti: controlla il testo esatto.";
 
 const near = (y: bigint) => `${formatUnitsIt(y, NEAR_DECIMALS)} NEAR`;
 const tgas = (g: bigint) => `${formatUnitsIt(g, 12)} TGas`;
@@ -100,18 +166,41 @@ export function exactText(p: TxPayload): string[] {
     });
     return lines;
   }
-  const d = decodeEvm(p.data);
-  const tok = evmTokens()[getAddress(p.to)];
-  const lines = [`Rete: ${p.network} (chainId ${p.chainId})`, `Destinatario (contratto): ${p.to}`, `Valore nativo: ${formatUnitsIt(p.value, 18)} ${evmNative(p.chainId)} (${p.value} wei)`];
-  if (d) {
-    lines.push(`Metodo: ${d.method}`);
-    for (const [k, v] of Object.entries(d.args)) {
-      const amt = typeof v === "bigint" && tok && /amount|value/i.test(k) ? ` = ${v === maxUint256 ? "ILLIMITATO" : `${formatUnitsIt(v, tok.decimals)} ${tok.symbol}`}` : "";
-      lines.push(`  ${k}: ${canonicalJson(v).replace(/^"|"$/g, "")}${amt}`);
-    }
-  } else if (p.data && p.data !== "0x") lines.push(`Metodo: non decodificato`);
-  lines.push(`Dati grezzi: ${p.data ?? "0x"}`);
-  lines.push(`Gas: ${p.gas !== undefined ? p.gas.toString() : "stimato al momento dell'invio"}`);
+  const issue = evmPayloadIssue(p);
+  let tok: { symbol: string; decimals: number } | undefined;
+  try { tok = evmTokens()[getAddress(p.to)]; } catch { /* invalid to: leave tok unset */ }
+  const valueOk = asAmount((p as { value?: unknown }).value);
+  const nativeAmt = valueOk !== undefined
+    ? `${formatUnitsIt(valueOk, 18)} ${evmNative(p.chainId)} (${valueOk} wei)`
+    : "non valido";
+  const lines = [`Rete: ${p.network} (chainId ${p.chainId})`, `Destinatario (contratto): ${p.to}`, `Valore nativo: ${nativeAmt}`];
+  if (issue === "MALFORMED: data") {
+    lines.push("Metodo: non decodificato (dati non sono hex 0x valido)");
+    lines.push(`Dati grezzi: ${String((p as { data?: unknown }).data)}`);
+  } else if (issue === "MALFORMED: value") {
+    const d = isValidHexData(p.data) || p.data === undefined ? decodeEvm(p.data) : null;
+    if (d) {
+      lines.push(`Metodo: ${d.method}`);
+      for (const [k, v] of Object.entries(d.args)) lines.push(`  ${k}: ${canonicalJson(v).replace(/^"|"$/g, "")}`);
+    } else if (p.data && p.data !== "0x") lines.push("Metodo: non decodificato");
+    lines.push(`Dati grezzi: ${p.data ?? "0x"}`);
+  } else {
+    const d = decodeEvm(p.data);
+    const trunc = isTruncatedSensitive(p.data);
+    if (d) {
+      lines.push(`Metodo: ${d.method}`);
+      for (const [k, v] of Object.entries(d.args)) {
+        const amt = typeof v === "bigint" && tok && /amount|value|addedValue/i.test(k) ? ` = ${v === maxUint256 ? "ILLIMITATO" : `${formatUnitsIt(v, tok.decimals)} ${tok.symbol}`}` : "";
+        lines.push(`  ${k}: ${canonicalJson(v).replace(/^"|"$/g, "")}${amt}`);
+      }
+    } else if (trunc) {
+      lines.push(`Metodo: ${trunc.method} (incompleto o malformato)`);
+      lines.push(TRUNCATED_WARNING);
+    } else if (p.data && p.data !== "0x") lines.push("Metodo: non decodificato");
+    lines.push(`Dati grezzi: ${p.data ?? "0x"}`);
+  }
+  const gas = (p as { gas?: unknown }).gas;
+  lines.push(`Gas: ${typeof gas === "bigint" || (typeof gas === "number" && Number.isFinite(gas)) ? String(gas) : gas !== undefined ? "non valido" : "stimato al momento dell'invio"}`);
   return lines;
 }
 
@@ -151,20 +240,52 @@ export function plainExplanation(p: TxPayload): PlainExplanation[] {
       }
     });
   }
-  const d = decodeEvm(p.data);
-  const tok = evmTokens()[getAddress(p.to)];
+  const issue = evmPayloadIssue(p);
+  if (issue === "MALFORMED: data")
+    return [{ text: UNKNOWN, risk: "unknown" }, { text: BAD_DATA_WARNING, risk: "high" }];
+  if (issue === "MALFORMED: value")
+    return [{ text: UNKNOWN, risk: "unknown" }, { text: BAD_VALUE_WARNING, risk: "high" }];
+  let tok: { symbol: string; decimals: number } | undefined;
+  try { tok = evmTokens()[getAddress(p.to)]; } catch { /* invalid to */ }
   const native = evmNative(p.chainId);
+  const valueOk = asAmount((p as { value?: unknown }).value) ?? 0n;
+  const trunc = isTruncatedSensitive(p.data);
+  if (trunc)
+    return [{ text: UNKNOWN, risk: "unknown" }, { text: TRUNCATED_WARNING, risk: "high" }];
+  const d = decodeEvm(p.data);
   if (!p.data || p.data === "0x")
-    return [{ text: `Stai inviando ${formatUnitsIt(p.value, 18)} ${native} a ${p.to} su ${p.network}.`, risk: "normal" }];
+    return [{ text: `Stai inviando ${formatUnitsIt(valueOk, 18)} ${native} a ${p.to} su ${p.network}.`, risk: "normal" }];
   if (!d) return [{ text: UNKNOWN, risk: "unknown" }];
-  const extra = p.value > 0n ? `, allegando ${formatUnitsIt(p.value, 18)} ${native}` : "";
+  const extra = valueOk > 0n ? `, allegando ${formatUnitsIt(valueOk, 18)} ${native}` : "";
   const amt = (v: unknown) => (tok && typeof v === "bigint" ? `${formatUnitsIt(v, tok.decimals)} ${tok.symbol}` : `${String(v)} unità del token ${p.to}`);
+  const unlimitedOf = (spender: unknown, verb: string) =>
+    ({ text: `RISCHIO ALTO: ${verb} ${String(spender)} a spendere una quantità ILLIMITATA di ${tok?.symbol ?? "token"} su ${p.network}. È un permesso totale.`, risk: "high" as const });
   if (d.method === "transfer")
     return [{ text: `Stai inviando ${amt(d.args.amount)} a ${String(d.args.to)} tramite il metodo transfer su ${p.network}${extra}.`, risk: "normal" }];
   if (d.method === "approve") {
-    if (d.args.amount === maxUint256)
-      return [{ text: `RISCHIO ALTO: stai autorizzando ${String(d.args.spender)} a spendere una quantità ILLIMITATA di ${tok?.symbol ?? "token"} su ${p.network}.`, risk: "high" }];
+    if (d.args.amount === maxUint256) return [unlimitedOf(d.args.spender, "stai autorizzando")];
     return [{ text: `Stai autorizzando ${String(d.args.spender)} a spendere fino a ${amt(d.args.amount)} su ${p.network}${extra}.`, risk: "normal" }];
+  }
+  if (d.method === "increaseAllowance") {
+    const added = d.args.addedValue;
+    if (added === maxUint256)
+      return [{ text: `RISCHIO ALTO: stai aumentando l'autorizzazione di ${String(d.args.spender)} di una quantità ILLIMITATA di ${tok?.symbol ?? "token"} su ${p.network}. È un permesso totale.`, risk: "high" }];
+    return [{ text: `Stai aumentando l'autorizzazione di ${String(d.args.spender)} di ${amt(added)} su ${p.network}${extra}.`, risk: "normal" }];
+  }
+  if (d.method === "permit" && (d.style === "dai-permit" || "allowed" in d.args)) {
+    if (d.args.allowed === true)
+      return [{ text: `RISCHIO ALTO: stai firmando un permit DAI che autorizza ${String(d.args.spender)} a spendere una quantità ILLIMITATA di ${tok?.symbol ?? "token"} su ${p.network}. È un permesso totale.`, risk: "high" }];
+    return [{ text: `Stai firmando un permit DAI che revoca l'autorizzazione di ${String(d.args.spender)} su ${p.network}.`, risk: "normal" }];
+  }
+  if (d.method === "permit") {
+    if (d.args.value === maxUint256)
+      return [{ text: `RISCHIO ALTO: stai firmando un permit che autorizza ${String(d.args.spender)} a spendere una quantità ILLIMITATA di ${tok?.symbol ?? "token"} su ${p.network}. È un permesso totale.`, risk: "high" }];
+    return [{ text: `Stai firmando un permit che autorizza ${String(d.args.spender)} a spendere fino a ${amt(d.args.value)} su ${p.network}${extra}.`, risk: "normal" }];
+  }
+  if (d.method === "setApprovalForAll") {
+    if (d.args.approved === true)
+      return [{ text: `RISCHIO ALTO: stai dando a ${String(d.args.operator)} il permesso TOTALE di gestire tutti i tuoi NFT del contratto ${p.to} su ${p.network} (setApprovalForAll).`, risk: "high" }];
+    return [{ text: `Stai revocando a ${String(d.args.operator)} il permesso di gestire tutti i tuoi NFT del contratto ${p.to} su ${p.network}.`, risk: "normal" }];
   }
   if (d.method === "depositForBurn")
     return [{ text: `Stai spostando ${formatUnitsIt(d.args.amount as bigint, 6)} USDC da ${p.network} a un'altra rete con CCTP (commissione massima ${formatUnitsIt(d.args.maxFee as bigint, 6)} USDC).`, risk: "normal" }];
@@ -208,33 +329,30 @@ export function renderApproval(v: ApprovalView): string {
 
 // ---------- shared event (Primo) ----------
 
-/** Shared log event for every IntentGuard guard module. amount is base units, never a string. */
-export type GuardEvent = {
-  kind: string;
-  planId: `0x${string}`;
-  reason: string;
-  amount: bigint;
-  ts: string;
-  id: string | null;
+type GuardEvent = QueueEvent;
+
+export const lowerPlanId = (id: string): `0x${string}` => {
+  const s = id.trim();
+  return (s.startsWith("0x") || s.startsWith("0X") ? s : `0x${s}`).toLowerCase() as `0x${string}`;
 };
 
-export const lowerPlanId = (id: string): `0x${string}` =>
-  (id.startsWith("0x") ? id : `0x${id}`).toLowerCase() as `0x${string}`;
-
 export function guardEvent(o: {
-  kind: string;
+  kind: QueueEvent["kind"];
   planId: string;
   reason: string;
   amount: bigint;
   now: number;
   id?: string | null;
-}): GuardEvent {
+}): QueueEvent {
+  // Never crash on a non-finite now: the caller must have already blocked with BAD_NOW
+  // and must not have written state. The timestamp on the event itself stays a valid ISO string.
   const ts = Number.isFinite(o.now) ? new Date(o.now).toISOString() : new Date().toISOString();
+  const amount = typeof o.amount === "bigint" ? o.amount : 0n;
   return {
     kind: o.kind,
     planId: lowerPlanId(o.planId),
     reason: o.reason,
-    amount: o.amount,
+    amount,
     ts,
     id: o.id ?? null,
   };
@@ -285,6 +403,11 @@ export type ConsentReason =
   | "ConsentRejected"
   | "ConsentMalformed"
   | "ConsentBadNow"
+  | "BAD_NOW"
+  | "BAD_CONFIG"
+  | "MALFORMED"
+  | "MissingAmount"
+  | "AmountMismatch"
   | "Expired"
   | "Consumed"
   | "NotConsented";
@@ -345,10 +468,47 @@ type Stored = {
 /** Issued when the approval view is shown. Bound to exactly that payload hash. */
 export function issueConsent(
   view: ApprovalView,
-  o: { now?: number | bigint; ttlMs?: number | bigint; nonce?: string | number; log?: (e: GuardEvent) => void; amount?: bigint } = {},
+  o: {
+    now?: number | bigint;
+    ttlMs?: number | bigint;
+    nonce?: string | number;
+    log?: (e: QueueEvent) => void;
+    amount?: bigint;
+    store?: ConsentStore;
+  } = {},
 ): Consent {
-  const issuedAt = asFiniteNumber(o.now) ?? Date.now();
-  const ttl = asFiniteNumber(o.ttlMs) ?? CONSENT_TTL_MS;
+  const fail = (code: ConsentReason, reason: string, at: number): never => {
+    const ev = guardEvent({
+      kind: "blocked",
+      planId: typeof view?.payloadHash === "string" ? lowerPlanId(view.payloadHash) : ZERO_HASH,
+      reason,
+      amount: typeof o.amount === "bigint" ? o.amount : 0n,
+      now: Number.isFinite(at) ? at : Date.now(),
+      id: null,
+    });
+    o.log?.(ev);
+    throw new ConsentError(code, reason, ev);
+  };
+
+  let issuedAt: number;
+  if ("now" in o && o.now !== undefined) {
+    const n = asFiniteNumber(o.now);
+    if (n === undefined) return fail("BAD_NOW", "BAD_NOW", Date.now());
+    issuedAt = n;
+  } else {
+    issuedAt = Date.now();
+  }
+  if (o.store && !o.store.acceptNow(issuedAt)) fail("BAD_NOW", "BAD_NOW", Date.now());
+
+  let ttl: number;
+  if ("ttlMs" in o && o.ttlMs !== undefined) {
+    const t = asFiniteNumber(o.ttlMs);
+    if (t === undefined || t <= 0) return fail("BAD_CONFIG", "BAD_CONFIG: ttlMs", issuedAt);
+    ttl = Math.min(t, CONSENT_TTL_MS);
+  } else {
+    ttl = CONSENT_TTL_MS;
+  }
+
   const consent: Consent = {
     payloadHash: lowerPlanId(view.payloadHash),
     nonce: normNonce(o.nonce) ?? randomNonce(),
@@ -357,10 +517,10 @@ export function issueConsent(
   };
   o.log?.(
     guardEvent({
-      kind: "consent_shown",
+      kind: "queued",
       planId: consent.payloadHash,
-      reason: "",
-      amount: o.amount ?? 0n,
+      reason: "ConsentShown",
+      amount: typeof o.amount === "bigint" ? o.amount : 0n,
       now: issuedAt,
       id: consent.nonce,
     }),
@@ -372,10 +532,27 @@ export function issueConsent(
  * Remembers consents. Expired, rejected and consumed records older than the window are pruned,
  * but seen planIds stay so a replay is still blocked.
  */
+export type ConsentHistory = { status: Stored["status"]; amount: bigint; nonce: string };
+
 export class ConsentStore {
   private recs = new Map<string, Stored>();
   private seenPlanIds = new Set<string>();
+  /** Per-planId final record. Survives prune and remove, so a recreate cannot reset history. */
+  private history = new Map<string, ConsentHistory>();
+  private lastNow: number | undefined;
   private seq = 0;
+
+  /**
+   * Accept a clock value: must be finite and not earlier than the last value seen.
+   * On failure, write no state (including lastNow). On success, remember `now`.
+   */
+  acceptNow(now: number): boolean {
+    if (!Number.isFinite(now)) return false;
+    if (this.lastNow !== undefined && now < this.lastNow) return false;
+    this.lastNow = now;
+    return true;
+  }
+
   has = (nonce: unknown) => {
     const n = normNonce(nonce);
     return n !== undefined && this.recs.has(n);
@@ -387,6 +564,7 @@ export class ConsentStore {
   put = (row: Stored) => {
     this.recs.set(row.nonce, row);
     this.seenPlanIds.add(row.planId);
+    this.history.set(row.planId, { status: row.status, amount: row.amount, nonce: row.nonce });
   };
   /** Marks a nonce as already used (replay). Accepts string or number forms. */
   spend = (nonce: unknown) => {
@@ -405,17 +583,32 @@ export class ConsentStore {
     });
   };
   seen = (planId: string) => this.seenPlanIds.has(lowerPlanId(planId));
+  historyOf = (planId: string) => this.history.get(lowerPlanId(planId));
+  /**
+   * Drops the live record only. History and seen planIds stay, so removing and
+   * re-creating a consent with the same id cannot reset replay or limits.
+   */
+  remove = (nonce: unknown) => {
+    const n = normNonce(nonce);
+    if (n === undefined) return;
+    this.recs.delete(n);
+  };
   /** True if this planId was already consented or consumed (replay). */
   wasUsed = (planId: string) => {
     const id = lowerPlanId(planId);
+    const h = this.history.get(id);
+    if (h && (h.status === "consented" || h.status === "consumed" || h.status === "rejected" || h.status === "expired")) return true;
     if (!this.seenPlanIds.has(id)) return false;
     for (const r of this.recs.values()) {
       if (r.planId === id && (r.status === "consented" || r.status === "consumed" || r.status === "rejected" || r.status === "expired")) return true;
     }
-    // pruned but still seen
     return this.seenPlanIds.has(id);
   };
   prune = (now: number, windowMs = CONSENT_WINDOW_MS) => {
+    // Invalid clock or window: write no state.
+    if (!Number.isFinite(now)) return;
+    if (this.lastNow !== undefined && now < this.lastNow) return;
+    if (!Number.isFinite(windowMs) || windowMs <= 0) return;
     const cut = now - windowMs;
     for (const [k, r] of this.recs) {
       if ((r.status === "expired" || r.status === "rejected" || r.status === "consumed") && (r.decidedAt ?? r.expiresAt) < cut) {
@@ -443,7 +636,7 @@ export class ConsentError extends Error {
 export function verifyConsent(
   consent: unknown,
   current: unknown,
-  o?: { store?: ConsentStore; now?: unknown; log?: (r: GuardEvent) => void; amount?: bigint },
+  o?: { store?: ConsentStore; now?: unknown; log?: (r: QueueEvent) => void; amount?: bigint },
 ): VerifyResult {
   const log = o && typeof o === "object" ? o.log : undefined;
   const store = o && typeof o === "object" ? o.store : undefined;
@@ -451,8 +644,8 @@ export function verifyConsent(
   const now = asFiniteNumber(nowRaw);
   const knownAmount = o && typeof o === "object" ? asAmount(o.amount) : undefined;
 
-  const fail = (kind: string, reason: ConsentReason, planId: `0x${string}`, amount: bigint, nonce?: string, at?: number): VerifyResult => {
-    const record = guardEvent({ kind, planId, reason, amount, now: at ?? (now ?? Date.now()), id: nonce ?? null });
+  const fail = (kind: QueueEvent["kind"], reason: ConsentReason, planId: `0x${string}`, amount: bigint, nonce?: string, at?: number): VerifyResult => {
+    const record = guardEvent({ kind, planId, reason, amount, now: Number.isFinite(at) ? at! : (now !== undefined ? now : Date.now()), id: nonce ?? null });
     log?.(record);
     return { ok: false, reason, record };
   };
@@ -460,9 +653,14 @@ export function verifyConsent(
   try {
     const amountHint = (p: unknown) => knownAmount ?? payloadAmount(p);
     if (now === undefined) {
-      return fail("blocked", "ConsentBadNow", planIdOf(current), amountHint(current));
+      return fail("blocked", "BAD_NOW", planIdOf(current), amountHint(current), undefined, Date.now());
+    }
+    if (store && !store.acceptNow(now)) {
+      return fail("blocked", "BAD_NOW", planIdOf(current), amountHint(current), undefined, Date.now());
     }
     if (!isPayload(current)) return fail("blocked", "ConsentMalformed", ZERO_HASH, knownAmount ?? 0n);
+    const fieldIssue = evmPayloadIssue(current);
+    if (fieldIssue) return fail("blocked", "MALFORMED", planIdOf(current), knownAmount ?? 0n);
     const view = approvalView(current);
     const planId = lowerPlanId(view.payloadHash);
     const amount = amountHint(current);
@@ -478,10 +676,11 @@ export function verifyConsent(
     if (!store) return fail("blocked", "ConsentMalformed", planId, amount, nonce);
     store.prune(now);
     const existing = store.get(nonce);
+    const hist = store.historyOf(planId);
     if (existing && (existing.status === "consented" || existing.status === "consumed" || existing.status === "rejected")) {
       return fail("blocked", "ConsentReplay", planId, amount, nonce);
     }
-    if (store.wasUsed(planId) && existing?.status !== "issued") {
+    if ((store.wasUsed(planId) || hist) && existing?.status !== "issued") {
       return fail("blocked", "ConsentReplay", planId, amount, nonce);
     }
     if (now > expiresAt || now < issuedAt) {
@@ -490,7 +689,7 @@ export function verifyConsent(
     }
     if (hash !== planId) return fail("blocked", "ConsentPayloadMismatch", planId, amount, nonce);
     store.put({ nonce, planId, payloadHash: hash, status: "consented", issuedAt, expiresAt, amount, decidedAt: now });
-    const event = guardEvent({ kind: "consented", planId, reason: "Consented", amount, now, id: nonce });
+    const event = guardEvent({ kind: "approved", planId, reason: "Consented", amount, now, id: nonce });
     log?.(event);
     return { ok: true, event };
   } catch {
@@ -505,27 +704,40 @@ export function verifyConsent(
 export function consumeConsent(
   consent: unknown,
   current: unknown,
-  o?: { store?: ConsentStore; now?: unknown; log?: (r: GuardEvent) => void; amount?: bigint },
-): GuardEvent {
+  o?: { store?: ConsentStore; now?: unknown; log?: (r: QueueEvent) => void; amount?: bigint },
+): QueueEvent {
   const log = o?.log;
   const store = o?.store;
   const now = asFiniteNumber(o && "now" in (o ?? {}) && o?.now !== undefined ? o.now : Date.now());
-  const knownAmount = asAmount(o?.amount);
-  const emitThrow = (kind: string, reason: ConsentReason, planId: `0x${string}`, amount: bigint, nonce?: string): never => {
-    const event = guardEvent({ kind, planId, reason, amount, now: now ?? Date.now(), id: nonce ?? null });
+  const amountProvided = o !== undefined && o !== null && typeof o === "object" && "amount" in o && o.amount !== undefined;
+  const knownAmount = amountProvided ? asAmount(o.amount) : undefined;
+  const emitThrow = (kind: QueueEvent["kind"], reason: ConsentReason, planId: `0x${string}`, amount: bigint, nonce?: string): never => {
+    const event = guardEvent({ kind, planId, reason, amount, now: now !== undefined ? now : Date.now(), id: nonce ?? null });
     log?.(event);
     throw new ConsentError(reason, reason, event);
   };
-  if (now === undefined) return emitThrow("blocked", "ConsentBadNow", planIdOf(current), knownAmount ?? payloadAmount(current));
+  if (now === undefined) return emitThrow("blocked", "BAD_NOW", planIdOf(current), knownAmount ?? payloadAmount(current));
+  if (store && !store.acceptNow(now)) return emitThrow("blocked", "BAD_NOW", planIdOf(current), knownAmount ?? payloadAmount(current));
   if (!store) return emitThrow("blocked", "ConsentMalformed", planIdOf(current), knownAmount ?? payloadAmount(current));
   store.prune(now);
   const c = consent as Consent | null | undefined;
   const nonce = c && typeof c === "object" ? normNonce(c.nonce) : undefined;
   const row = nonce !== undefined ? store.get(nonce) : undefined;
   const planId = row?.planId ?? planIdOf(current);
-  const amount = knownAmount ?? row?.amount ?? payloadAmount(current);
-  if (!row || nonce === undefined) return emitThrow("blocked", "NotConsented", planId, amount, nonce);
-  if (row.status === "consumed") return emitThrow("blocked", "ConsentReplay", planId, amount, nonce);
+  const hist = store.historyOf(planId);
+  if (!amountProvided) {
+    const amt = row?.amount ?? hist?.amount ?? payloadAmount(current);
+    return emitThrow("blocked", "MissingAmount", planId, amt, nonce);
+  }
+  if (knownAmount === undefined) return emitThrow("blocked", "MALFORMED", planId, row?.amount ?? hist?.amount ?? 0n, nonce);
+  const amount = knownAmount;
+  if (!row || nonce === undefined) {
+    if (hist?.status === "consumed") return emitThrow("blocked", "Consumed", planId, amount, nonce);
+    if (hist?.status === "rejected") return emitThrow("blocked", "ConsentRejected", planId, amount, nonce);
+    if (hist?.status === "expired") return emitThrow("expired", "Expired", planId, amount, nonce);
+    return emitThrow("blocked", "NotConsented", planId, amount, nonce);
+  }
+  if (row.status === "consumed") return emitThrow("blocked", "Consumed", planId, amount, nonce);
   if (row.status === "rejected") return emitThrow("blocked", "ConsentRejected", planId, amount, nonce);
   if (row.status === "expired" || now > row.expiresAt) {
     store.put({ ...row, status: "expired", decidedAt: now });
@@ -535,6 +747,7 @@ export function consumeConsent(
   if (isPayload(current) && lowerPlanId(approvalView(current).payloadHash) !== row.planId) {
     return emitThrow("blocked", "ConsentPayloadMismatch", planId, amount, nonce);
   }
+  if (amount !== row.amount) return emitThrow("blocked", "AmountMismatch", planId, amount, nonce);
   store.put({ ...row, status: "consumed", decidedAt: now, amount });
   const event = guardEvent({ kind: "consumed", planId, reason: "Consumed", amount, now, id: nonce });
   log?.(event);
@@ -545,12 +758,28 @@ export function consumeConsent(
 export function rejectConsent(
   consent: unknown,
   current: unknown,
-  o?: { store?: ConsentStore; now?: unknown; log?: (r: GuardEvent) => void; amount?: bigint },
-): GuardEvent {
+  o?: { store?: ConsentStore; now?: unknown; log?: (r: QueueEvent) => void; amount?: bigint },
+): QueueEvent {
   try {
     const c = consent as Consent | null | undefined;
     const nonce = c && typeof c === "object" ? normNonce(c.nonce) : undefined;
-    const now = asFiniteNumber(o?.now) ?? Date.now();
+    let now: number;
+    if (o && typeof o === "object" && "now" in o && o.now !== undefined) {
+      const n = asFiniteNumber(o.now);
+      if (n === undefined) {
+        const r = guardEvent({ kind: "blocked", planId: planIdOf(current), reason: "BAD_NOW", amount: asAmount(o?.amount) ?? payloadAmount(current), now: Date.now(), id: nonce ?? null });
+        o?.log?.(r);
+        return r;
+      }
+      now = n;
+    } else {
+      now = Date.now();
+    }
+    if (o?.store && !o.store.acceptNow(now)) {
+      const r = guardEvent({ kind: "blocked", planId: planIdOf(current), reason: "BAD_NOW", amount: asAmount(o?.amount) ?? payloadAmount(current), now: Date.now(), id: nonce ?? null });
+      o.log?.(r);
+      return r;
+    }
     const planId = planIdOf(current);
     const amount = asAmount(o?.amount) ?? payloadAmount(current);
     if (nonce !== undefined && o?.store) {
@@ -579,23 +808,41 @@ export function rejectConsent(
 // ---------- log redaction (logs only; PlainSign / exact text are never redacted) ----------
 
 const SECRET_KEY = /^(authorization|bearer|jwt|auth|recovery_phrase|password|passphrase|seed|private_?key|secret|mnemonic|sig|sk|pk)$/i;
+/** Exact field names whose 0x+64 hex may stay visible. Never a substring match. */
+const KEEP_HEX = new Set(["planhash", "txhash", "transactionhash", "blockhash", "root", "merkleroot", "planid"]);
+const SENSITIVE_SUB = /key|secret|priv|seed|mnemonic|password|salt/i;
 
-function looksLikeSecretValue(s: string): boolean {
-  if (/^0x[0-9a-fA-F]{64}$/.test(s)) return true;
+function keyLooksSensitive(k: string): boolean {
+  if (SECRET_KEY.test(k)) return true;
+  if (SENSITIVE_SUB.test(k)) return true;
+  return false;
+}
+
+function looksLikeJwtOrPhrase(s: string): boolean {
   if (/^eyJ[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+/.test(s)) return true;
   if (/^Bearer\s+\S+/i.test(s.trim())) return true;
   const words = s.trim().split(/\s+/);
   return [12, 15, 18, 21, 24].includes(words.length) && words.every((w) => /^[a-z]{3,8}$/.test(w));
 }
 
-/** Redact secrets in a log payload. Does not touch approval text. Word-boundary keys only (tokenIn stays visible). */
-export function redactSecrets(v: unknown): unknown {
-  if (typeof v === "string") return looksLikeSecretValue(v) ? "[redacted]" : v;
+function redactString(k: string | null, s: string): string {
+  if (k !== null && keyLooksSensitive(k)) return "[redacted]";
+  if (/^0x[0-9a-fA-F]{64}$/.test(s)) {
+    return k !== null && KEEP_HEX.has(k.toLowerCase()) ? s : "[redacted]";
+  }
+  if (/^0x[0-9a-fA-F]{40}$/.test(s)) return s;
+  if (looksLikeJwtOrPhrase(s)) return "[redacted]";
+  return s;
+}
+
+/** Redact secrets in a log payload. Does not touch approval text. */
+export function redactSecrets(v: unknown, key: string | null = null): unknown {
+  if (typeof v === "string") return redactString(key, v);
   if (v === null || typeof v !== "object") return v;
-  if (Array.isArray(v)) return v.map(redactSecrets);
+  if (Array.isArray(v)) return v.map((item) => redactSecrets(item, key));
   const out: Record<string, unknown> = {};
   for (const [k, val] of Object.entries(v as Record<string, unknown>)) {
-    out[k] = SECRET_KEY.test(k) || (typeof val === "string" && looksLikeSecretValue(val)) ? "[redacted]" : redactSecrets(val);
+    out[k] = redactSecrets(val, k);
   }
   return out;
 }
