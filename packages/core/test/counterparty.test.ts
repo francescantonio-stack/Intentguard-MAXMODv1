@@ -167,3 +167,11 @@ describe("lists, amount, getCode and EIP-7702", () => {
     expect(r.event).toBeNull();
   });
 });
+
+  it("blocks BadConfig when config is present but not a valid object", async () => {
+    for (const config of [null, "x", 1, []] as const) {
+      const r = await checkCounterparty({ address: A, paidBefore: [A], planId: PLAN, amount: 1n, now: 1, config: config as never }, eoa);
+      expect(r.verdict, String(config)).toBe("blocked");
+      expect(r.event?.reason, String(config)).toBe("BadConfig");
+    }
+  });

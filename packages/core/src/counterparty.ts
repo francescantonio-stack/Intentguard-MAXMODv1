@@ -1,7 +1,7 @@
 import { isAddress, type Address, type Hex } from "viem";
-import { blockedEvent, normalizeAddress, normalizePlanId, normalizeToken, type QueueEvent } from "./events";
+import type { QueueEvent } from "./events";
+import { asAmount as asAmountGuard, blockedEvent, lowerAddress, lowerPlanId, upperToken } from "./guards";
 import { redactSecrets } from "./redact";
-import { parseCount } from "./simulate";
 import { tightenNumber } from "./limits";
 
 /**
@@ -86,7 +86,9 @@ function parseAddrList(x: unknown, field: string): { ok: true; value: `0x${strin
     if (typeof i !== "string") return { ok: false, detail: `${field} contiene voci non valide` };
     const v = i.trim().toLowerCase();
     if (!isAddress(v)) return { ok: false, detail: `${field} contiene voci non valide` };
-    out.push(normalizeAddress(v));
+    const addr = lowerAddress(v);
+    if (!addr) return { ok: false, detail: `${field} contiene voci non valide` };
+    out.push(addr);
   }
   return { ok: true, value: out };
 }
@@ -113,24 +115,20 @@ const toCpSafeHold = (v: CounterpartyVerdict["verdict"], at: number, intent?: un
 });
 
 function planIdOf(x: unknown): `0x${string}` {
-  if (typeof x === "string") {
-    try { return normalizePlanId(x); } catch { /* fall through */ }
-  }
-  return ("0x" + "00".repeat(32)) as `0x${string}`;
+  return lowerPlanId(x) ?? ("0x" + "00".repeat(32)) as `0x${string}`;
 }
 
 function amountOf(x: unknown): { ok: true; value: bigint } | { ok: false } {
   if (x === undefined) return { ok: true, value: 0n };
-  const p = parseCount(x, "amount");
-  if (!p.ok || p.value < 0n) return { ok: false };
-  return { ok: true, value: p.value };
+  const v = asAmountGuard(x);
+  return v === null ? { ok: false } : { ok: true, value: v };
 }
 
 /** Check a payee before sending. Never throws. */
 export async function checkCounterparty(input: CounterpartyInput | null | undefined, client?: CodeClient | null): Promise<CounterpartyVerdict> {
   const at = Number.isFinite(input?.now) ? Number(input!.now) : (input?.now === undefined ? Date.now() : NaN);
   const findings: Finding[] = [];
-  const token = typeof input?.token === "string" && input.token.trim() ? normalizeToken(input.token) : undefined;
+  const token = upperToken(input?.token) ?? undefined;
   const planId = planIdOf(input?.planId);
   const parsedAmountEarly = amountOf(input?.amount);
   const amountForEvent = parsedAmountEarly.ok ? parsedAmountEarly.value : 0n;
@@ -160,7 +158,15 @@ export async function checkCounterparty(input: CounterpartyInput | null | undefi
       findings.push({ code: "SimUnavailable", severity: "blocked", detail: "indirizzo destinatario mancante o non valido" });
       return emit("SimUnavailable");
     }
-    const address = normalizeAddress(input.address);
+    const address = lowerAddress(input.address);
+    if (!address) {
+      findings.push({ code: "SimUnavailable", severity: "blocked", detail: "indirizzo destinatario mancante o non valido" });
+      return emit("SimUnavailable");
+    }
+    if (input.config !== undefined && (input.config == null || typeof input.config !== "object" || Array.isArray(input.config))) {
+      findings.push({ code: "BadConfig", severity: "blocked", detail: "config non valida" });
+      return emit("BadConfig", { address });
+    }
     const parsedAmount = amountOf(input.amount);
     if (!parsedAmount.ok) {
       findings.push({ code: "BadAmount", severity: "blocked", detail: "amount mancante o non valido" });
