@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { proofPassed, verifyProofs, asFiniteNumber, asAmount, ProofStore, type ProofPlan, type Proof } from "../src/proofs";
+import { proofPassed, verifyProofs, ProofStore, type ProofPlan, type Proof } from "../src/proofs";
 import type { QueueEvent } from "../src/events";
 
 const NOW = Date.parse("2026-11-24T05:35:00.000Z");
@@ -103,8 +103,6 @@ describe("fail-closed", () => {
     const c = verifyProofs({ planId: PID, amount: "10", required: [{ type: "simulation_passed" }] }, [{ type: "simulation_passed", ok: true }], opts());
     expect(c.ok).toBe(false);
     if (!c.ok) { expect(c.reason).toBe("MALFORMED"); expect(c.event.kind).toBe("blocked"); }
-    expect(asFiniteNumber("0.1")).toBeUndefined();
-    expect(asAmount(0n)).toBe(0n);
     expect(proofPassed({ ok: 0 })).toBe(false);
   });
 
@@ -161,7 +159,7 @@ describe("lezioni review: NO_REQUIRED, config, orologio, storico, tightening", (
   it("expiresAt dal dato può solo stringere il tetto, mai allargarlo", () => {
     // req expires far in the future, proof even farther, maxTtl 1s -> expired if we wait? at NOW, now+1000 is still future
     const rOk = verifyProofs(
-      plan([{ type: "delivery_receipt", expiresAt: NOW + 60_000 }]),
+      plan([{ type: "delivery_receipt", expiresAt: NOW + 20_000 }]),
       [{ type: "delivery_receipt", receiptId: "r", expiresAt: NOW + 1_000 }],
       opts({ maxTtlMs: 30_000 }),
     );
@@ -203,6 +201,132 @@ describe("lezioni review: NO_REQUIRED, config, orologio, storico, tightening", (
     if (!r2.ok) {
       expect(r2.reason).toBe("Consumed");
       expect(r2.event.kind).toBe("blocked");
+    }
+  });
+
+  it("con maxTtlMs una prova senza scadenza o con scadenza oltre now+maxTtlMs è bloccata", () => {
+    const noExp = verifyProofs(
+      plan([{ type: "delivery_receipt" }]),
+      [{ type: "delivery_receipt", receiptId: "r" }],
+      opts({ maxTtlMs: 30_000 }),
+    );
+    expect(noExp.ok).toBe(false);
+    if (!noExp.ok) {
+      expect(noExp.reason).toBe("proof_invalid");
+      expect(noExp.event.kind).toBe("blocked");
+    }
+    const tooFar = verifyProofs(
+      plan([{ type: "delivery_receipt", expiresAt: NOW + 60_000 }]),
+      [{ type: "delivery_receipt", receiptId: "r", expiresAt: NOW + 60_000 }],
+      opts({ maxTtlMs: 30_000 }),
+    );
+    expect(tooFar.ok).toBe(false);
+    if (!tooFar.ok) {
+      expect(tooFar.reason).toBe("proof_expired");
+      expect(tooFar.event.kind).toBe("blocked");
+    }
+  });
+
+  it("importo negativo è rifiutato", () => {
+    const r = verifyProofs(
+      plan([{ type: "simulation_passed" }], -1n),
+      [{ type: "simulation_passed", ok: true }],
+      opts(),
+    );
+    expect(r.ok).toBe(false);
+    if (!r.ok) {
+      expect(r.reason).toBe("MALFORMED");
+      expect(r.event.kind).toBe("blocked");
+    }
+  });
+
+  it("maxTtlMs 24h è accettato, 25h dà BAD_CONFIG con evento blocked", () => {
+    const h24 = 24 * 60 * 60 * 1000;
+    const h25 = 25 * 60 * 60 * 1000;
+    const ok = verifyProofs(
+      plan([{ type: "delivery_receipt", expiresAt: NOW + 1_000 }]),
+      [{ type: "delivery_receipt", receiptId: "r", expiresAt: NOW + 1_000 }],
+      opts({ maxTtlMs: h24 }),
+    );
+    expect(proofPassed(ok)).toBe(true);
+    const over = verifyProofs(
+      plan([{ type: "delivery_receipt", expiresAt: NOW + 1_000 }]),
+      [{ type: "delivery_receipt", receiptId: "r", expiresAt: NOW + 1_000 }],
+      opts({ maxTtlMs: h25 }),
+    );
+    expect(over.ok).toBe(false);
+    if (!over.ok) {
+      expect(over.reason).toBe("BAD_CONFIG: maxTtlMs");
+      expect(over.event.kind).toBe("blocked");
+    }
+  });
+
+  it("ttl 1000, t=1_000_000 poi 1_005_000 poi 1_000_500: non torna eseguibile", () => {
+    const store2 = new ProofStore();
+    const pplan = plan([{ type: "delivery_receipt", expiresAt: 1_000_500 }]);
+    const proofs = [{ type: "delivery_receipt", receiptId: "r", expiresAt: 1_000_500 }];
+    const a = verifyProofs(pplan, proofs, opts({ store: store2, now: 1_000_000, maxTtlMs: 1000 }));
+    expect(proofPassed(a)).toBe(true);
+    const b = verifyProofs(pplan, proofs, opts({ store: store2, now: 1_005_000, maxTtlMs: 1000 }));
+    expect(b.ok).toBe(false);
+    const c = verifyProofs(pplan, proofs, opts({ store: store2, now: 1_000_500, maxTtlMs: 1000 }));
+    expect(c.ok).toBe(false);
+    if (!c.ok) {
+      expect(c.reason).toBe("BAD_NOW");
+      expect(c.event.kind).toBe("blocked");
+    }
+  });
+
+  it("lookup di un id sconosciuto o malformato emette blocked e non lancia", () => {
+    const store = new ProofStore();
+    const evs2: QueueEvent[] = [];
+    const unknown = store.lookup(PID, { now: NOW, onEvent: (e) => evs2.push(e) });
+    expect(unknown.ok).toBe(false);
+    if (!unknown.ok) {
+      expect(unknown.reason).toBe("Unknown");
+      expect(unknown.event.kind).toBe("blocked");
+      expect(unknown.event.planId).toBe(PID.toLowerCase());
+    }
+    const bad = store.lookup("not-a-plan", { now: NOW, onEvent: (e) => evs2.push(e) });
+    expect(bad.ok).toBe(false);
+    if (!bad.ok) {
+      expect(bad.reason).toBe("MALFORMED");
+      expect(bad.event.kind).toBe("blocked");
+      expect(bad.event.planId).toBe("0x" + "00".repeat(32));
+      expect(JSON.stringify(bad.event, (_k, v) => typeof v === "bigint" ? v.toString() : v)).not.toContain("not-a-plan");
+    }
+  });
+
+  it("amount nel piano e amount nelle opzioni diversi: AmountMismatch, non passa in silenzio", () => {
+    const r = verifyProofs(
+      plan([{ type: "simulation_passed" }], 10n),
+      [{ type: "simulation_passed", ok: true }],
+      opts({ amount: 11n }),
+    );
+    expect(r.ok).toBe(false);
+    if (!r.ok) {
+      expect(r.reason).toBe("AmountMismatch");
+      expect(r.event.kind).toBe("blocked");
+      expect(r.event.amount).toBe(11n);
+    }
+    const same = verifyProofs(
+      plan([{ type: "simulation_passed" }], 10n),
+      [{ type: "simulation_passed", ok: true }],
+      opts({ amount: 10n }),
+    );
+    expect(proofPassed(same)).toBe(true);
+  });
+
+  it("expiresAt ISO impossibile (2026-02-31) è rifiutato", () => {
+    const r = verifyProofs(
+      plan([{ type: "delivery_receipt", expiresAt: "2026-02-31T00:00:00.000Z" as never }]),
+      [{ type: "delivery_receipt", receiptId: "r", expiresAt: "2026-02-31T00:00:00.000Z" as never }],
+      opts(),
+    );
+    expect(r.ok).toBe(false);
+    if (!r.ok) {
+      expect(["proof_invalid", "MALFORMED"]).toContain(r.reason);
+      expect(r.event.kind).toBe("blocked");
     }
   });
 });

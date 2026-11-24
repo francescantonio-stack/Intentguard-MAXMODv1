@@ -5,37 +5,17 @@
  * is written in the shared format. Pure TS: no network, no keys, no signing. Fail-closed.
  */
 import type { QueueEvent } from "./events";
+import { asAmount, asFiniteNumber, guardEvent, lowerPlanId, ZERO_PLAN } from "./guards";
 
 
 type GuardEvent = QueueEvent;
 
-export const lowerPlanId = (id: string): `0x${string}` => {
-  const s = id.trim();
-  return (s.startsWith("0x") || s.startsWith("0X") ? s : `0x${s}`).toLowerCase() as `0x${string}`;
-};
+const ZERO_HASH = ZERO_PLAN;
+const safePlanId = (id: unknown): `0x${string}` => lowerPlanId(id) ?? ZERO_PLAN;
 
-export function guardEvent(o: { kind: QueueEvent["kind"]; planId: string; reason: string; amount: bigint; now: number; id?: string | null }): QueueEvent {
-  const ts = Number.isFinite(o.now) ? new Date(o.now).toISOString() : new Date().toISOString();
-  const amount = typeof o.amount === "bigint" ? o.amount : 0n;
-  return { kind: o.kind, planId: lowerPlanId(o.planId), reason: o.reason, amount, ts, id: o.id ?? null };
-}
+/** Hard maximum for operator-supplied maxTtlMs. null/missing → no cap. Above this → BAD_CONFIG (never clamped). */
+const PROOFS_MAX_TTL_MS = 86_400_000; // 24h
 
-export function asFiniteNumber(v: unknown): number | undefined {
-  if (typeof v === "bigint") {
-    if (v > BigInt(Number.MAX_SAFE_INTEGER) || v < BigInt(Number.MIN_SAFE_INTEGER)) return undefined;
-    return Number(v);
-  }
-  if (typeof v === "number" && Number.isFinite(v)) return v;
-  return undefined;
-}
-
-export function asAmount(v: unknown): bigint | undefined {
-  if (typeof v === "bigint") return v;
-  if (typeof v === "number" && Number.isFinite(v) && Number.isInteger(v)) return BigInt(v);
-  return undefined;
-}
-
-const ZERO_HASH = ("0x" + "00".repeat(32)) as `0x${string}`;
 const HASH_RE = /^0x[0-9a-f]{64}$/;
 
 export type ProofType = "invoice_hash" | "counterparty_attestation" | "delivery_receipt" | "simulation_passed" | (string & {});
@@ -92,16 +72,34 @@ export class ProofStore {
   }
 
   remember(planId: string, rec: ProofHistory) {
-    this.history.set(lowerPlanId(planId), rec);
+    this.history.set(safePlanId(planId), rec);
   }
 
   historyOf(planId: string) {
-    return this.history.get(lowerPlanId(planId));
+    return this.history.get(safePlanId(planId));
+  }
+
+  lookup(planId: unknown, o?: { now?: number; onEvent?: (e: QueueEvent) => void }):
+    { ok: true; history: ProofHistory } | { ok: false; reason: string; event: QueueEvent } {
+    const now = asFiniteNumber(o?.now) ?? Date.now();
+    const id = lowerPlanId(planId);
+    if (!id) {
+      const event = guardEvent({ kind: "blocked", planId: ZERO_HASH, reason: "MALFORMED", amount: 0n, now, id: null });
+      o?.onEvent?.(event);
+      return { ok: false, reason: "MALFORMED", event };
+    }
+    const history = this.history.get(id);
+    if (!history) {
+      const event = guardEvent({ kind: "blocked", planId: id, reason: "Unknown", amount: 0n, now, id });
+      o?.onEvent?.(event);
+      return { ok: false, reason: "Unknown", event };
+    }
+    return { ok: true, history };
   }
 
   /** No-op on history: a "remove" must not reset the per-id record. */
   remove(planId: string) {
-    void lowerPlanId(planId);
+    void safePlanId(planId);
   }
 
   get size() { return this.history.size; }
@@ -122,14 +120,14 @@ export const builtinVerifiers: Record<string, ProofVerifier> = {
     if (typeof proof.attester !== "string" || !proof.attester) return "proof_invalid";
     if (typeof req.attester !== "string" || !req.attester) return "proof_invalid";
     if (proof.attester.toLowerCase() !== req.attester.toLowerCase()) return "proof_invalid";
-    if (proof.expiresAt !== undefined && asFiniteNumber(proof.expiresAt) === undefined) return "proof_invalid";
+    if (proof.expiresAt !== undefined && asFiniteNumber(proof.expiresAt) == null) return "proof_invalid";
     return "ok";
   },
   delivery_receipt: (req, proof, _now) => {
     if (!proof) return "proof_missing";
     if (proof.type !== "delivery_receipt") return "proof_invalid";
     if (typeof proof.receiptId !== "string" || !proof.receiptId) return "proof_invalid";
-    if (proof.expiresAt !== undefined && asFiniteNumber(proof.expiresAt) === undefined) return "proof_invalid";
+    if (proof.expiresAt !== undefined && asFiniteNumber(proof.expiresAt) == null) return "proof_invalid";
     return "ok";
   },
   simulation_passed: (_req, proof) => {
@@ -166,7 +164,7 @@ export function verifyProofs(
   const known = asAmount(o.amount);
 
   try {
-    if (now === undefined) {
+    if (now == null) {
       const ev = emit("blocked", ZERO_HASH, "BAD_NOW", known ?? 0n, Date.now(), null);
       return { ok: false, reason: "BAD_NOW", event: ev, events: [ev] };
     }
@@ -174,9 +172,9 @@ export function verifyProofs(
       const ev = emit("blocked", ZERO_HASH, "BAD_NOW", known ?? 0n, Date.now(), null);
       return { ok: false, reason: "BAD_NOW", event: ev, events: [ev] };
     }
-    if ("maxTtlMs" in o && o.maxTtlMs !== undefined) {
+    if ("maxTtlMs" in o && o.maxTtlMs !== undefined && o.maxTtlMs !== null) {
       const cap = asFiniteNumber(o.maxTtlMs);
-      if (cap === undefined || cap <= 0) {
+      if (cap == null || cap <= 0 || cap > PROOFS_MAX_TTL_MS) {
         const ev = emit("blocked", ZERO_HASH, "BAD_CONFIG: maxTtlMs", known ?? 0n, now, null);
         return { ok: false, reason: "BAD_CONFIG: maxTtlMs", event: ev, events: [ev] };
       }
@@ -187,13 +185,30 @@ export function verifyProofs(
     }
     const p = plan as ProofPlan;
     if (typeof p.planId !== "string" || !HASH_RE.test(p.planId.toLowerCase())) {
-      const ev = emit("blocked", typeof p.planId === "string" ? lowerPlanId(p.planId) : ZERO_HASH, "MALFORMED", known ?? asAmount(p.amount) ?? 0n, now, null);
+      const ev = emit("blocked", safePlanId(p.planId), "MALFORMED", known ?? asAmount(p.amount) ?? 0n, now, null);
       return { ok: false, reason: "MALFORMED", event: ev, events: [ev] };
     }
     const planId = lowerPlanId(p.planId);
-    const amount = known ?? asAmount(p.amount);
-    if (amount === undefined) {
+    if (!planId) {
+      const ev = emit("blocked", ZERO_HASH, "MALFORMED", known ?? asAmount(p.amount) ?? 0n, now, null);
+      return { ok: false, reason: "MALFORMED", event: ev, events: [ev] };
+    }
+    const planAmt = asAmount(p.amount);
+    if (p.amount !== undefined && p.amount !== null && planAmt == null) {
+      const ev = emit("blocked", planId, "MALFORMED", known ?? 0n, now, planId);
+      return { ok: false, reason: "MALFORMED", event: ev, events: [ev] };
+    }
+    if (known != null && planAmt != null && known !== planAmt) {
+      const ev = emit("blocked", planId, "AmountMismatch", known, now, planId);
+      return { ok: false, reason: "AmountMismatch", event: ev, events: [ev] };
+    }
+    const amount = known ?? planAmt;
+    if (amount == null) {
       const ev = emit("blocked", planId, "MALFORMED", 0n, now, planId);
+      return { ok: false, reason: "MALFORMED", event: ev, events: [ev] };
+    }
+    if (amount < 0n) {
+      const ev = emit("blocked", planId, "MALFORMED", amount, now, planId);
       return { ok: false, reason: "MALFORMED", event: ev, events: [ev] };
     }
     const prior = o.store?.historyOf(planId);
@@ -220,14 +235,18 @@ export function verifyProofs(
     const effectiveExpiry = (req: ProofRequirement, proof: Proof | undefined): { ok: true; exp?: number } | { ok: false; reason: string } => {
       const raw = [req.expiresAt, proof?.expiresAt];
       for (const v of raw) {
-        if (v !== undefined && asFiniteNumber(v) === undefined) return { ok: false, reason: "proof_invalid" };
+        if (v !== undefined && asFiniteNumber(v) == null) return { ok: false, reason: "proof_invalid" };
       }
       const caps: number[] = [];
       const reqExp = asFiniteNumber(req.expiresAt);
       const proofExp = asFiniteNumber(proof?.expiresAt);
-      if (reqExp !== undefined) caps.push(reqExp);
-      if (proofExp !== undefined) caps.push(proofExp);
-      if (maxTtl !== undefined) caps.push(now + maxTtl);
+      if (reqExp != null) caps.push(reqExp);
+      if (proofExp != null) caps.push(proofExp);
+      if (maxTtl != null) {
+        const cap = now + maxTtl;
+        if (caps.length === 0) return { ok: false, reason: "proof_invalid" };
+        if (caps.some((e) => e > cap)) return { ok: false, reason: "proof_expired" };
+      }
       const exp = caps.length ? Math.min(...caps) : undefined;
       return { ok: true, exp };
     };
