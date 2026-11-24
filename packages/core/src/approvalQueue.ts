@@ -11,7 +11,7 @@
 export type QueueStatus = "auto" | "pending" | "approved" | "rejected" | "expired" | "consumed";
 
 /** Block reasons, aligned with ActionBlocked(planId, reason, amount). */
-export type BlockReason = "NotInQueue" | "Pending" | "Consumed" | "Expired" | "Rejected" | "AmountMismatch";
+export type BlockReason = "NotInQueue" | "Pending" | "Consumed" | "Expired" | "Rejected" | "AmountMismatch" | "MissingAmount";
 
 export type QueueEvent = {
   kind: "queued" | "auto_approved" | "approved" | "rejected" | "expired" | "consumed" | "blocked";
@@ -189,8 +189,8 @@ export class ApprovalQueue {
     return it.status === "auto" || it.status === "approved";
   }
 
-  /** One-time use. Throws (and logs a block) if the plan may not run or the amount differs. */
-  consume(planId: string, amount?: bigint): QueueItem {
+  /** One-time use. `amount` is mandatory: missing -> MissingAmount, different -> AmountMismatch. */
+  consume(planId: string, amount: bigint): QueueItem {
     const p = String(planId).toLowerCase();
     const id = this.byPlan.get(p);
     const blockAmt = typeof amount === "bigint" ? amount : 0n;
@@ -200,8 +200,9 @@ export class ApprovalQueue {
     };
     if (!id) return block(this.seen.has(p) ? BLOCK_OF[this.seen.get(p)!] : "NotInQueue", blockAmt, null);
     const it = this.live(id);
-    if (it.status !== "auto" && it.status !== "approved") return block(BLOCK_OF[it.status], amount ?? it.amount, id);
-    if (amount !== undefined && amount !== it.amount) return block("AmountMismatch", blockAmt, id);
+    if (it.status !== "auto" && it.status !== "approved") return block(BLOCK_OF[it.status], typeof amount === "bigint" ? amount : it.amount, id);
+    if (typeof amount !== "bigint") return block("MissingAmount", it.amount, id);
+    if (amount !== it.amount) return block("AmountMismatch", blockAmt, id);
     it.status = "consumed";
     this.emit("consumed", it.planId, it.amount, id);
     return { ...it };

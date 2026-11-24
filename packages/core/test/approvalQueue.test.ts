@@ -18,16 +18,16 @@ describe("ApprovalQueue", () => {
     const { q, events } = setup();
     expect(q.submit(pay(1, 1n * USDC)).status).toBe("auto");
     expect(q.canExecute(h(1))).toBe(true);
-    q.consume(h(1));
+    q.consume(h(1), 1n * USDC);
     expect(q.canExecute(h(1))).toBe(false);
-    expect(() => q.consume(h(1))).toThrow(/blocked: Consumed/);
+    expect(() => q.consume(h(1), 1n * USDC)).toThrow(/blocked: Consumed/);
     expect(events.map((e) => e.kind)).toEqual(["auto_approved", "consumed", "blocked"]);
   });
 
   it("events follow the ActionBlocked shape: planId, reason string, amount bigint", () => {
     const { q, events } = setup();
     q.submit(pay(1, 5n * USDC));
-    expect(() => q.consume(h(1))).toThrow(/Pending/);
+    expect(() => q.consume(h(1), 5n * USDC)).toThrow(/Pending/);
     const e = events.at(-1)!;
     expect(e).toMatchObject({ kind: "blocked", planId: h(1), reason: "Pending", amount: 5n * USDC, id: "q1" });
     expect(typeof e.amount).toBe("bigint");
@@ -58,7 +58,7 @@ describe("ApprovalQueue", () => {
     q.approve(it1.id, "max", h(1));
     tick(31 * 60_000);
     expect(q.canExecute(h(1))).toBe(false);
-    expect(() => q.consume(h(1))).toThrow(/blocked: Expired/);
+    expect(() => q.consume(h(1), 5n * USDC)).toThrow(/blocked: Expired/);
     expect(events.map((e) => e.kind)).toEqual(["queued", "approved", "expired", "blocked"]);
   });
 
@@ -67,14 +67,14 @@ describe("ApprovalQueue", () => {
     q.submit(pay(1, 2n * USDC));
     expect(q.submit(pay(2, 1n)).status).toBe("pending");
     tick(H + 1);
-    expect(() => q.consume(h(1))).toThrow(/Expired/);
+    expect(() => q.consume(h(1), 2n * USDC)).toThrow(/Expired/);
     expect(q.submit(pay(3, 2n * USDC)).status).toBe("auto"); // unused auto released
   });
 
   it("anti-splitting: auto-approvals are summed over the window", () => {
     const { q, tick } = setup();
-    q.submit(pay(1, 1n * USDC)); q.consume(h(1));
-    q.submit(pay(2, 1n * USDC)); q.consume(h(2));
+    q.submit(pay(1, 1n * USDC)); q.consume(h(1), 1n * USDC);
+    q.submit(pay(2, 1n * USDC)); q.consume(h(2), 1n * USDC);
     const third = q.submit(pay(3, 1n));
     expect(third.status).toBe("pending");
     expect(third.reason).toBe("WindowTotal");
@@ -86,7 +86,7 @@ describe("ApprovalQueue", () => {
     const { q } = setup();
     const big = q.submit(pay(1, 10n * USDC));
     q.approve(big.id, "max", h(1));
-    q.consume(h(1));
+    q.consume(h(1), 10n * USDC);
     expect(q.submit(pay(2, 2n * USDC)).status).toBe("auto");
   });
 
@@ -96,6 +96,16 @@ describe("ApprovalQueue", () => {
     expect(() => q.consume(h(1), 3n * USDC)).toThrow(/AmountMismatch/);
     expect(events.at(-1)).toMatchObject({ reason: "AmountMismatch", amount: 3n * USDC });
     expect(q.canExecute(h(1))).toBe(true);
+  });
+
+  it("consume without amount is blocked with MissingAmount and stays runnable", () => {
+    const { q, events } = setup();
+    q.submit(pay(1, 1n * USDC));
+    expect(() => (q.consume as (p: string, a?: bigint) => unknown)(h(1))).toThrow(/MissingAmount/);
+    expect(() => q.consume(h(1), 1 as unknown as bigint)).toThrow(/MissingAmount/);
+    expect(events.at(-1)).toMatchObject({ kind: "blocked", reason: "MissingAmount", amount: 1n * USDC, id: "q1" });
+    expect(q.canExecute(h(1))).toBe(true);
+    q.consume(h(1), 1n * USDC);
   });
 
   it("unknown plan is blocked with the given amount, not 0", () => {
@@ -123,7 +133,7 @@ describe("ApprovalQueue", () => {
     const { q } = setup();
     const it1 = q.submit(pay(1, 5n * USDC));
     q.reject(it1.id, "max", "unknown recipient");
-    expect(() => q.consume(h(1))).toThrow(/Rejected/);
+    expect(() => q.consume(h(1), 5n * USDC)).toThrow(/Rejected/);
     expect(() => q.approve(it1.id, "max", h(1))).toThrow(/status rejected/);
   });
 
@@ -154,7 +164,7 @@ describe("ApprovalQueue", () => {
     const { q, tick } = setup();
     for (let i = 1; i <= 50; i++) {
       q.submit(pay(i, 1n));
-      q.consume(h(i));
+      q.consume(h(i), 1n);
     }
     const r = q.submit(pay(100, 5n * USDC));
     q.reject(r.id, "max");
@@ -163,8 +173,8 @@ describe("ApprovalQueue", () => {
     q.submit(pay(200, 1n));
     expect(q.size()).toBe(1);
     expect(() => q.submit(pay(7, 1n))).toThrow(/already submitted/);
-    expect(() => q.consume(h(7))).toThrow(/blocked: Consumed/);
-    expect(() => q.consume(h(100))).toThrow(/blocked: Rejected/);
+    expect(() => q.consume(h(7), 1n)).toThrow(/blocked: Consumed/);
+    expect(() => q.consume(h(100), 5n * USDC)).toThrow(/blocked: Rejected/);
   });
 
   it("rejects bad input and duplicate plans", () => {
