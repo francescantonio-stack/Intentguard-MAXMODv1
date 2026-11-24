@@ -7,7 +7,7 @@
  *   signatures exhausted, not enough gas, expected out < minAmountOut, SAFE HOLD not PROCEED.
  * - Estimated risks: slippage margin vs volatility, time left vs latency, history of similar intents.
  */
-import type { QueueEvent } from "./approvalQueue";
+import type { QueueEvent } from "./events";
 
 type IntLike = bigint | number | string;
 
